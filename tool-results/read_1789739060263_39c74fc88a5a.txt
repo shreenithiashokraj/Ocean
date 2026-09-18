@@ -1,0 +1,1157 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Real-Time Sea Conditions — Fisherman Module view.
+     5→ *
+     6→ * Client-side view (rendered inside the AppShell single-SPA) that shows the
+     7→ * latest Open-Meteo weather + marine snapshot for the user's location (or a
+     8→ * searched coastal place), plus a 24-hour forecast chart. Falls back to
+     9→ * Chennai (Bay of Bengal) when geolocation is denied or unsupported.
+    10→ *
+    11→ * Data is fetched through the shared api layer (`api.getSeaConditions`,
+    12→ * `api.searchPlaces`) — never fetch()ed directly. When the live API is
+    13→ * unreachable the backend returns clearly-labeled demo data (`isDemo: true`)
+    14→ * and this view renders a prominent amber notice so fake values are never
+    15→ * shown as live.
+    16→ */
+    17→
+    18→import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+    19→import {
+    20→  AlertOctagon,
+    21→  AlertTriangle,
+    22→  CheckCircle2,
+    23→  Cloud,
+    24→  CloudDrizzle,
+    25→  CloudFog,
+    26→  CloudLightning,
+    27→  CloudRain,
+    28→  CloudSun,
+    29→  Compass,
+    30→  Gauge,
+    31→  Info,
+    32→  LocateFixed,
+    33→  Loader2,
+    34→  MapPin,
+    35→  Navigation,
+    36→  RefreshCw,
+    37→  Search,
+    38→  Snowflake,
+    39→  Sun,
+    40→  Sunrise,
+    41→  Sunset,
+    42→  Thermometer,
+    43→  Waves,
+    44→  Wind,
+    45→} from "lucide-react";
+    46→import {
+    47→  Area,
+    48→  AreaChart,
+    49→  CartesianGrid,
+    50→  XAxis,
+    51→  YAxis,
+    52→} from "recharts";
+    53→import {
+    54→  Card,
+    55→  CardContent,
+    56→  CardDescription,
+    57→  CardHeader,
+    58→  CardTitle,
+    59→} from "@/components/ui/card";
+    60→import { Button } from "@/components/ui/button";
+    61→import { Input } from "@/components/ui/input";
+    62→import { Badge } from "@/components/ui/badge";
+    63→import {
+    64→  Select,
+    65→  SelectContent,
+    66→  SelectItem,
+    67→  SelectTrigger,
+    68→  SelectValue,
+    69→} from "@/components/ui/select";
+    70→import {
+    71→  ChartContainer,
+    72→  ChartTooltip,
+    73→  ChartTooltipContent,
+    74→  type ChartConfig,
+    75→} from "@/components/ui/chart";
+    76→import { api, ApiError } from "@/lib/api";
+    77→import type { SeaConditionData } from "@/lib/types";
+    78→import { cn } from "@/lib/utils";
+    79→import { toast } from "sonner";
+    80→import { StatCard } from "@/components/common/stat-card";
+    81→import {
+    82→  CardSkeleton,
+    83→  ErrorState,
+    84→  Unavailable,
+    85→} from "@/components/common/states";
+    86→
+    87→// ── Constants & types ───────────────────────────────────────────────────
+    88→
+    89→const CHENNAI = { lat: 13.0827, lng: 80.2707 };
+    90→
+    91→type RefreshMinutes = "1" | "5" | "15" | "30" | "off";
+    92→
+    93→const REFRESH_OPTIONS: { value: RefreshMinutes; label: string }[] = [
+    94→  { value: "1", label: "Every 1 minute" },
+    95→  { value: "5", label: "Every 5 minutes" },
+    96→  { value: "15", label: "Every 15 minutes" },
+    97→  { value: "30", label: "Every 30 minutes" },
+    98→  { value: "off", label: "Off" },
+    99→];
+   100→
+   101→interface PlaceResult {
+   102→  name: string;
+   103→  lat: number;
+   104→  lng: number;
+   105→  country?: string;
+   106→  region?: string;
+   107→}
+   108→
+   109→interface SeaConditionsResponse {
+   110→  data: SeaConditionData;
+   111→  isDemo: boolean;
+   112→  source: string;
+   113→  recordedAt: string | null;
+   114→  label: string;
+   115→}
+   116→
+   117→interface PlacesResponse {
+   118→  results: PlaceResult[];
+   119→}
+   120→
+   121→// ── Helpers ─────────────────────────────────────────────────────────────
+   122→
+   123→const COMPASS_POINTS = [
+   124→  "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+   125→  "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+   126→];
+   127→
+   128→function degToCompass(deg: number | null | undefined): string | null {
+   129→  if (deg == null || Number.isNaN(deg)) return null;
+   130→  return COMPASS_POINTS[Math.round(deg / 22.5) % 16];
+   131→}
+   132→
+   133→function fmtNum(n: number | null | undefined, digits = 1): string | null {
+   134→  if (n == null || Number.isNaN(n)) return null;
+   135→  return n.toFixed(digits);
+   136→}
+   137→
+   138→/** Extract "HH:MM" from an open-meteo local-time string like "2024-01-01T06:30". */
+   139→function formatHHMM(iso: string | null | undefined): string | null {
+   140→  if (!iso) return null;
+   141→  if (iso.length >= 16) return iso.slice(11, 16);
+   142→  return iso;
+   143→}
+   144→
+   145→function formatUpdatedAt(iso: string | null): string {
+   146→  if (!iso) return "N/A";
+   147→  const d = new Date(iso);
+   148→  if (Number.isNaN(d.getTime())) return iso;
+   149→  return d.toLocaleString();
+   150→}
+   151→
+   152→type Safety = "safe" | "caution" | "dangerous" | "unknown";
+   153→
+   154→/** Derive safety status from wind speed (km/h) and wave height (m). */
+   155→function deriveStatus(data: SeaConditionData | null): Safety {
+   156→  if (!data) return "unknown";
+   157→  const wind = data.windSpeed;
+   158→  const wave = data.waveHeight;
+   159→  if (wind == null && wave == null) return "unknown";
+   160→  const w = wind ?? 0;
+   161→  const h = wave ?? 0;
+   162→  if (w < 25 && h < 1.5) return "safe";
+   163→  if (w < 40 && h < 2.5) return "caution";
+   164→  return "dangerous";
+   165→}
+   166→
+   167→// WMO weather code → lucide icon mapping (Open-Meteo uses WMO codes).
+   168→const WEATHER_ICONS: Record<number, typeof Sun> = {
+   169→  0: Sun,
+   170→  1: CloudSun,
+   171→  2: CloudSun,
+   172→  3: Cloud,
+   173→  45: CloudFog,
+   174→  48: CloudFog,
+   175→  51: CloudDrizzle, 53: CloudDrizzle, 55: CloudDrizzle, 56: CloudDrizzle, 57: CloudDrizzle,
+   176→  61: CloudRain, 63: CloudRain, 65: CloudRain, 66: CloudRain, 67: CloudRain,
+   177→  71: Snowflake, 73: Snowflake, 75: Snowflake, 77: Snowflake,
+   178→  80: CloudRain, 81: CloudRain, 82: CloudRain,
+   179→  85: Snowflake, 86: Snowflake,
+   180→  95: CloudLightning, 96: CloudLightning, 99: CloudLightning,
+   181→};
+   182→
+   183→function weatherIconFor(code: number | null | undefined) {
+   184→  if (code == null) return Cloud;
+   185→  return WEATHER_ICONS[code] ?? Cloud;
+   186→}
+   187→
+   188→// ── Main component ──────────────────────────────────────────────────────
+   189→
+   190→export function SeaConditionsView() {
+   191→  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+   192→  const [accuracy, setAccuracy] = useState<number | null>(null);
+   193→  const [label, setLabel] = useState<string>("");
+   194→  const [data, setData] = useState<SeaConditionData | null>(null);
+   195→  const [isDemo, setIsDemo] = useState<boolean>(false);
+   196→  const [recordedAt, setRecordedAt] = useState<string | null>(null);
+   197→  const [source, setSource] = useState<string>("");
+   198→  const [loading, setLoading] = useState<boolean>(false);
+   199→  const [error, setError] = useState<string | null>(null);
+   200→  const [refreshMinutes, setRefreshMinutes] = useState<RefreshMinutes>("off");
+   201→  const [searchQuery, setSearchQuery] = useState<string>("");
+   202→  const [searching, setSearching] = useState<boolean>(false);
+   203→  const [searchResults, setSearchResults] = useState<PlaceResult[]>([]);
+   204→  const [showResults, setShowResults] = useState<boolean>(false);
+   205→  const searchContainerRef = useRef<HTMLDivElement>(null);
+   206→
+   207→  // ── Data fetcher ──────────────────────────────────────────────────
+   208→  const fetchData = useCallback(async (lat: number, lng: number, silent = false) => {
+   209→    if (!silent) setLoading(true);
+   210→    setError(null);
+   211→    try {
+   212→      const res = (await api.getSeaConditions(lat, lng)) as unknown as SeaConditionsResponse;
+   213→      setData(res.data);
+   214→      setIsDemo(res.isDemo);
+   215→      setRecordedAt(res.recordedAt);
+   216→      setSource(res.source);
+   217→      setLabel(res.label);
+   218→    } catch (err) {
+   219→      const msg = err instanceof ApiError
+   220→        ? err.message
+   221→        : err instanceof Error
+   222→          ? err.message
+   223→          : "Failed to fetch sea conditions";
+   224→      setError(msg);
+   225→      if (!silent) toast.error("Failed to load sea conditions.");
+   226→    } finally {
+   227→      if (!silent) setLoading(false);
+   228→    }
+   229→  }, []);
+   230→
+   231→  // ── On mount: geolocate or fall back to Chennai ───────────────────
+   232→  useEffect(() => {
+   233→    if (typeof navigator === "undefined" || !navigator.geolocation) {
+   234→      toast.info("Geolocation is unavailable on this device — showing Chennai by default.");
+   235→      setCoords(CHENNAI);
+   236→      return;
+   237→    }
+   238→    navigator.geolocation.getCurrentPosition(
+   239→      (pos) => {
+   240→        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+   241→        setAccuracy(pos.coords.accuracy ?? null);
+   242→      },
+   243→      () => {
+   244→        toast.info("Location access denied — showing Chennai by default.");
+   245→        setCoords(CHENNAI);
+   246→      },
+   247→      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+   248→    );
+   249→  }, []);
+   250→
+   251→  // ── Fetch whenever coords change ─────────────────────────────────
+   252→  useEffect(() => {
+   253→    if (!coords) return;
+   254→    void fetchData(coords.lat, coords.lng);
+   255→  }, [coords, fetchData]);
+   256→
+   257→  // ── Auto-refresh interval ─────────────────────────────────────────
+   258→  useEffect(() => {
+   259→    if (!coords || refreshMinutes === "off") return;
+   260→    const ms = Number(refreshMinutes) * 60 * 1000;
+   261→    const t = setInterval(() => {
+   262→      void fetchData(coords.lat, coords.lng, true);
+   263→    }, ms);
+   264→    return () => clearInterval(t);
+   265→  }, [coords, refreshMinutes, fetchData]);
+   266→
+   267→  // ── Clear search dropdown when query is cleared ─────────────────
+   268→  useEffect(() => {
+   269→    if (searchQuery === "") {
+   270→      setShowResults(false);
+   271→      setSearchResults([]);
+   272→    }
+   273→  }, [searchQuery]);
+   274→
+   275→  // ── Click-outside to dismiss search dropdown ─────────────────────
+   276→  useEffect(() => {
+   277→    if (!showResults) return;
+   278→    function onDocClick(e: MouseEvent) {
+   279→      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+   280→        setShowResults(false);
+   281→      }
+   282→    }
+   283→    document.addEventListener("mousedown", onDocClick);
+   284→    return () => document.removeEventListener("mousedown", onDocClick);
+   285→  }, [showResults]);
+   286→
+   287→  // ── "Use my location" button ──────────────────────────────────────
+   288→  const useMyLocation = useCallback(() => {
+   289→    if (typeof navigator === "undefined" || !navigator.geolocation) {
+   290→      toast.error("Geolocation is not supported on this device.");
+   291→      return;
+   292→    }
+   293→    toast.info("Requesting your location…");
+   294→    navigator.geolocation.getCurrentPosition(
+   295→      (pos) => {
+   296→        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+   297→        setAccuracy(pos.coords.accuracy ?? null);
+   298→        toast.success("Using your current location.");
+   299→      },
+   300→      () => toast.error("Could not access your location."),
+   301→      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+   302→    );
+   303→  }, []);
+   304→
+   305→  // ── Manual place search ───────────────────────────────────────────
+   306→  const runSearch = useCallback(async () => {
+   307→    const q = searchQuery.trim();
+   308→    if (!q) return;
+   309→    setSearching(true);
+   310→    setShowResults(true);
+   311→    try {
+   312→      const res = (await api.searchPlaces(q)) as unknown as PlacesResponse;
+   313→      setSearchResults(res.results ?? []);
+   314→      if ((res.results ?? []).length === 0) {
+   315→        toast.info("No matching places found.");
+   316→      }
+   317→    } catch (err) {
+   318→      toast.error(err instanceof Error ? err.message : "Place search failed.");
+   319→      setSearchResults([]);
+   320→    } finally {
+   321→      setSearching(false);
+   322→    }
+   323→  }, [searchQuery]);
+   324→
+   325→  const pickPlace = useCallback((p: PlaceResult) => {
+   326→    setCoords({ lat: p.lat, lng: p.lng });
+   327→    setAccuracy(null);
+   328→    setShowResults(false);
+   329→    setSearchQuery("");
+   330→    setSearchResults([]);
+   331→    toast.success(`Location set to ${p.name}.`);
+   332→  }, []);
+   333→
+   334→  const status = deriveStatus(data);
+   335→
+   336→  // ── Build chart dataset from hourly arrays ───────────────────────
+   337→  const chartData = useMemo(() => {
+   338→    const hourly = data?.hourly;
+   339→    if (!hourly || !hourly.time || hourly.time.length === 0) return [];
+   340→    return hourly.time.map((t, i) => ({
+   341→      time: t.length >= 16 ? t.slice(11, 16) : t,
+   342→      waveHeight: hourly.waveHeight?.[i] ?? null,
+   343→      windSpeed: hourly.windSpeed?.[i] ?? null,
+   344→    }));
+   345→  }, [data]);
+   346→
+   347→  return (
+   348→    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+   349→      {/* ── Page header ─────────────────────────────────────────────── */}
+   350→      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+   351→        <div>
+   352→          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+   353→            Real-Time Sea Conditions
+   354→          </h1>
+   355→          <p className="mt-1 text-sm text-muted-foreground">
+   356→            Live weather & marine data for safer fishing decisions. Source:{" "}
+   357→            <span className="font-medium text-foreground">{source || "open-meteo"}</span>
+   358→            {recordedAt && (
+   359→              <span className="text-muted-foreground">
+   360→                {" · "}Updated {formatUpdatedAt(recordedAt)}
+   361→              </span>
+   362→            )}
+   363→          </p>
+   364→        </div>
+   365→        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+   366→          <label className="flex items-center gap-2" htmlFor="refresh-select">
+   367→            <span className="text-xs font-medium text-muted-foreground">Auto-refresh</span>
+   368→            <Select
+   369→              value={refreshMinutes}
+   370→              onValueChange={(v) => setRefreshMinutes(v as RefreshMinutes)}
+   371→            >
+   372→              <SelectTrigger
+   373→                id="refresh-select"
+   374→                className="w-[160px]"
+   375→                aria-label="Auto-refresh interval"
+   376→              >
+   377→                <SelectValue />
+   378→              </SelectTrigger>
+   379→              <SelectContent>
+   380→                {REFRESH_OPTIONS.map((o) => (
+   381→                  <SelectItem key={o.value} value={o.value}>
+   382→                    {o.label}
+   383→                  </SelectItem>
+   384→                ))}
+   385→              </SelectContent>
+   386→            </Select>
+   387→          </label>
+   388→          <Button
+   389→            variant="outline"
+   390→            size="sm"
+   391→            onClick={useMyLocation}
+   392→            aria-label="Use my current location"
+   393→          >
+   394→            <LocateFixed className="size-4" />
+   395→            My location
+   396→          </Button>
+   397→        </div>
+   398→      </header>
+   399→
+   400→      {/* ── Manual location search ──────────────────────────────────── */}
+   401→      <div className="relative mt-4" ref={searchContainerRef}>
+   402→        <div className="flex gap-2">
+   403→          <div className="relative flex-1">
+   404→            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+   405→            <Input
+   406→              type="search"
+   407→              value={searchQuery}
+   408→              onChange={(e) => setSearchQuery(e.target.value)}
+   409→              onKeyDown={(e) => {
+   410→                if (e.key === "Enter") {
+   411→                  e.preventDefault();
+   412→                  void runSearch();
+   413→                }
+   414→              }}
+   415→              placeholder="Search a coastal city or place…"
+   416→              className="pl-9"
+   417→              aria-label="Search for a place by name"
+   418→              aria-expanded={showResults}
+   419→              aria-controls="place-results"
+   420→            />
+   421→          </div>
+   422→          <Button onClick={() => void runSearch()} disabled={searching} size="sm">
+   423→            {searching ? (
+   424→              <Loader2 className="size-4 animate-spin" />
+   425→            ) : (
+   426→              <Search className="size-4" />
+   427→            )}
+   428→            Search
+   429→          </Button>
+   430→        </div>
+   431→        {showResults && searchResults.length > 0 && (
+   432→          <div
+   433→            id="place-results"
+   434→            role="listbox"
+   435→            className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border bg-popover shadow-lg"
+   436→          >
+   437→            <ul className="max-h-72 overflow-y-auto scroll-ocean py-1">
+   438→              {searchResults.map((r, i) => (
+   439→                <li key={`${r.name}-${r.lat}-${i}`} role="option" aria-selected={false}>
+   440→                  <button
+   441→                    type="button"
+   442→                    onClick={() => pickPlace(r)}
+   443→                    className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left text-sm hover:bg-accent focus:bg-accent focus:outline-none"
+   444→                  >
+   445→                    <span className="font-medium">{r.name}</span>
+   446→                    <span className="text-xs text-muted-foreground">
+   447→                      {[r.region, r.country].filter(Boolean).join(", ") || "—"}
+   448→                    </span>
+   449→                  </button>
+   450→                </li>
+   451→              ))}
+   452→            </ul>
+   453→          </div>
+   454→        )}
+   455→      </div>
+   456→
+   457→      {/* ── Status banner ───────────────────────────────────────────── */}
+   458→      <section className="mt-4" aria-live="polite">
+   459→        <StatusBanner status={status} isDemo={isDemo} data={data} />
+   460→      </section>
+   461→
+   462→      {/* ── Headline metrics strip (StatCard) ─────────────────────── */}
+   463→      {data && !error && (
+   464→        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+   465→          <StatCard
+   466→            label="Wind Speed"
+   467→            value={fmtNum(data.windSpeed, 0)}
+   468→            unit="km/h"
+   469→            icon={Wind}
+   470→            accent="cyan"
+   471→            sub={degToCompass(data.windDirection) ? `from ${degToCompass(data.windDirection)}` : undefined}
+   472→          />
+   473→          <StatCard
+   474→            label="Wave Height"
+   475→            value={fmtNum(data.waveHeight, 1)}
+   476→            unit="m"
+   477→            icon={Waves}
+   478→            accent="blue"
+   479→            sub={fmtNum(data.wavePeriod, 0) ? `${fmtNum(data.wavePeriod, 0)}s period` : undefined}
+   480→          />
+   481→          <StatCard
+   482→            label="Air Temp"
+   483→            value={fmtNum(data.airTemperature, 0)}
+   484→            unit="°C"
+   485→            icon={Thermometer}
+   486→            accent="amber"
+   487→          />
+   488→          <StatCard
+   489→            label="Sea Surface"
+   490→            value={fmtNum(data.seaSurfaceTemperature, 0)}
+   491→            unit="°C"
+   492→            icon={Waves}
+   493→            accent="green"
+   494→          />
+   495→        </div>
+   496→      )}
+   497→
+   498→      {/* ── Cards grid ─────────────────────────────────────────────── */}
+   499→      <section className="mt-4" aria-label="Sea condition details">
+   500→        {loading && !data ? (
+   501→          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+   502→            {Array.from({ length: 6 }).map((_, i) => (
+   503→              <CardSkeleton key={i} />
+   504→            ))}
+   505→          </div>
+   506→        ) : error ? (
+   507→          <ErrorState
+   508→            title="Couldn't load sea conditions"
+   509→            message={error}
+   510→            onRetry={() => coords && void fetchData(coords.lat, coords.lng)}
+   511→          />
+   512→        ) : data ? (
+   513→          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+   514→            <LocationCard
+   515→              label={label}
+   516→              lat={coords?.lat ?? data.location?.lat ?? null}
+   517→              lng={coords?.lng ?? data.location?.lng ?? null}
+   518→              accuracy={accuracy}
+   519→              onRefresh={() => coords && void fetchData(coords.lat, coords.lng)}
+   520→              onUseMyLocation={useMyLocation}
+   521→              loading={loading}
+   522→            />
+   523→            <WeatherOverviewCard data={data} />
+   524→            <WindCard data={data} />
+   525→            <WaveCard data={data} />
+   526→            <TemperatureCard data={data} />
+   527→            <AtmosphericsCard data={data} />
+   528→            <SunCard data={data} />
+   529→          </div>
+   530→        ) : null}
+   531→      </section>
+   532→
+   533→      {/* ── Marine condition chart ──────────────────────────────────── */}
+   534→      <section className="mt-4" aria-label="24-hour marine forecast chart">
+   535→        <MarineConditionChart data={chartData} loading={loading} />
+   536→      </section>
+   537→
+   538→      {/* ── Footer ─────────────────────────────────────────────────── */}
+   539→      <footer className="mt-6 flex flex-col gap-2 border-t border-border/60 pt-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+   540→        <div>
+   541→          Last updated:{" "}
+   542→          <span className="font-medium text-foreground">
+   543→            {formatUpdatedAt(recordedAt)}
+   544→          </span>
+   545→          {source && <span className="ml-2">· source: {source}</span>}
+   546→        </div>
+   547→        {isDemo && (
+   548→          <div className="flex items-center gap-1.5 text-amber-500">
+   549→            <Info className="size-3.5" />
+   550→            <span>
+   551→              Live API unavailable — showing offline demo data.
+   552→            </span>
+   553→          </div>
+   554→        )}
+   555→      </footer>
+   556→    </div>
+   557→  );
+   558→}
+   559→
+   560→export default SeaConditionsView;
+   561→
+   562→// ── Sub-components ──────────────────────────────────────────────────────
+   563→
+   564→const STATUS_CONFIG: Record<
+   565→  Safety,
+   566→  {
+   567→    Icon: typeof CheckCircle2;
+   568→    label: string;
+   569→    hint: string;
+   570→    border: string;
+   571→    accentBg: string;
+   572→    badge: string;
+   573→    dotColor: string;
+   574→  }
+   575→> = {
+   576→  safe: {
+   577→    Icon: CheckCircle2,
+   578→    label: "Safe to operate",
+   579→    hint: "Wind and wave conditions are within safe limits.",
+   580→    border: "border-emerald-500/40",
+   581→    accentBg: "bg-emerald-500/10 text-emerald-300",
+   582→    badge: "from-emerald-500/20 to-emerald-500/5 text-emerald-400",
+   583→    dotColor: "bg-emerald-500",
+   584→  },
+   585→  caution: {
+   586→    Icon: AlertTriangle,
+   587→    label: "Use caution",
+   588→    hint: "Conditions are marginal — assess before heading out.",
+   589→    border: "border-amber-500/40",
+   590→    accentBg: "bg-amber-500/10 text-amber-300",
+   591→    badge: "from-amber-500/20 to-amber-500/5 text-amber-400",
+   592→    dotColor: "bg-amber-500",
+   593→  },
+   594→  dangerous: {
+   595→    Icon: AlertOctagon,
+   596→    label: "Hazardous conditions",
+   597→    hint: "High winds or waves — avoid going to sea.",
+   598→    border: "border-rose-500/40",
+   599→    accentBg: "bg-rose-500/10 text-rose-300",
+   600→    badge: "from-rose-500/20 to-rose-500/5 text-rose-400",
+   601→    dotColor: "bg-rose-500",
+   602→  },
+   603→  unknown: {
+   604→    Icon: Info,
+   605→    label: "Status unavailable",
+   606→    hint: "Wind and wave data are missing for this location.",
+   607→    border: "border-border",
+   608→    accentBg: "bg-card text-muted-foreground",
+   609→    badge: "from-muted/40 to-muted/5 text-muted-foreground",
+   610→    dotColor: "bg-muted-foreground",
+   611→  },
+   612→};
+   613→
+   614→function StatusBanner({
+   615→  status,
+   616→  isDemo,
+   617→  data,
+   618→}: {
+   619→  status: Safety;
+   620→  isDemo: boolean;
+   621→  data: SeaConditionData | null;
+   622→}) {
+   623→  const cfg = STATUS_CONFIG[status];
+   624→  return (
+   625→    <div
+   626→      role="status"
+   627→      className={cn(
+   628→        "glass-card flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between",
+   629→        cfg.border,
+   630→        cfg.accentBg,
+   631→      )}
+   632→    >
+   633→      <div className="flex items-start gap-3">
+   634→        <div
+   635→          className={cn(
+   636→            "flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br",
+   637→            cfg.badge,
+   638→          )}
+   639→        >
+   640→          <cfg.Icon className="size-5" />
+   641→        </div>
+   642→        <div>
+   643→          <p className="font-semibold leading-tight">{cfg.label}</p>
+   644→          <p className="text-sm text-muted-foreground">{cfg.hint}</p>
+   645→        </div>
+   646→      </div>
+   647→      <div className="flex flex-wrap items-center gap-2">
+   648→        {data?.windSpeed != null && (
+   649→          <Badge variant="outline" className="bg-background/60">
+   650→            <Wind className="size-3" />
+   651→            {data.windSpeed.toFixed(0)} km/h
+   652→          </Badge>
+   653→        )}
+   654→        {data?.waveHeight != null && (
+   655→          <Badge variant="outline" className="bg-background/60">
+   656→            <Waves className="size-3" />
+   657→            {data.waveHeight.toFixed(1)} m
+   658→          </Badge>
+   659→        )}
+   660→        {isDemo && (
+   661→          <Badge
+   662→            variant="outline"
+   663→            className="border-amber-500/50 bg-amber-500/15 text-amber-300"
+   664→          >
+   665→            Demo Data / Offline Mode
+   666→          </Badge>
+   667→        )}
+   668→      </div>
+   669→    </div>
+   670→  );
+   671→}
+   672→
+   673→function LocationCard({
+   674→  label,
+   675→  lat,
+   676→  lng,
+   677→  accuracy,
+   678→  onRefresh,
+   679→  onUseMyLocation,
+   680→  loading,
+   681→}: {
+   682→  label: string;
+   683→  lat: number | null;
+   684→  lng: number | null;
+   685→  accuracy: number | null;
+   686→  onRefresh: () => void;
+   687→  onUseMyLocation: () => void;
+   688→  loading: boolean;
+   689→}) {
+   690→  return (
+   691→    <Card className="glass-card">
+   692→      <CardHeader>
+   693→        <CardTitle className="flex items-center gap-2 text-base">
+   694→          <MapPin className="size-4 text-primary" /> Current Location
+   695→        </CardTitle>
+   696→        <CardDescription className="truncate">{label || "Unknown location"}</CardDescription>
+   697→      </CardHeader>
+   698→      <CardContent className="flex flex-col gap-3">
+   699→        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+   700→          <div>
+   701→            <dt className="text-xs text-muted-foreground">Latitude</dt>
+   702→            <dd className="font-medium tabular-nums">
+   703→              {lat != null ? lat.toFixed(4) : <Unavailable />}
+   704→            </dd>
+   705→          </div>
+   706→          <div>
+   707→            <dt className="text-xs text-muted-foreground">Longitude</dt>
+   708→            <dd className="font-medium tabular-nums">
+   709→              {lng != null ? lng.toFixed(4) : <Unavailable />}
+   710→            </dd>
+   711→          </div>
+   712→          <div className="col-span-2">
+   713→            <dt className="text-xs text-muted-foreground">GPS accuracy</dt>
+   714→            <dd className="font-medium tabular-nums">
+   715→              {accuracy != null ? `±${accuracy.toFixed(0)} m` : <Unavailable />}
+   716→            </dd>
+   717→          </div>
+   718→        </dl>
+   719→        <div className="flex gap-2">
+   720→          <Button
+   721→            size="sm"
+   722→            variant="outline"
+   723→            className="flex-1"
+   724→            onClick={onUseMyLocation}
+   725→            aria-label="Use my current location"
+   726→          >
+   727→            <LocateFixed className="size-4" />
+   728→            My location
+   729→          </Button>
+   730→          <Button
+   731→            size="sm"
+   732→            variant="default"
+   733→            className="flex-1"
+   734→            onClick={onRefresh}
+   735→            disabled={loading}
+   736→            aria-label="Refresh sea conditions"
+   737→          >
+   738→            {loading ? (
+   739→              <Loader2 className="size-4 animate-spin" />
+   740→            ) : (
+   741→              <RefreshCw className="size-4" />
+   742→            )}
+   743→            Refresh
+   744→          </Button>
+   745→        </div>
+   746→      </CardContent>
+   747→    </Card>
+   748→  );
+   749→}
+   750→
+   751→function WeatherOverviewCard({ data }: { data: SeaConditionData }) {
+   752→  // Use createElement (not a JSX capital tag) to avoid the
+   753→  // react-hooks/static-components "components created during render" warning.
+   754→  return (
+   755→    <Card className="glass-card">
+   756→      <CardHeader>
+   757→        <CardTitle className="flex items-center gap-2 text-base">
+   758→          <Sun className="size-4 text-primary" /> Weather Overview
+   759→        </CardTitle>
+   760→        <CardDescription>Current surface conditions.</CardDescription>
+   761→      </CardHeader>
+   762→      <CardContent className="flex items-center gap-4">
+   763→        <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500/20 to-amber-500/5 text-amber-400">
+   764→          {createElement(weatherIconFor(data.weatherCode), { className: "size-7" })}
+   765→        </div>
+   766→        <div className="min-w-0">
+   767→          <p className="text-lg font-semibold leading-tight">
+   768→            {data.weatherText || "Unknown"}
+   769→          </p>
+   770→          {data.airTemperature != null ? (
+   771→            <p className="text-sm text-muted-foreground">
+   772→              Air temperature:{" "}
+   773→              <span className="font-medium text-foreground">
+   774→                {data.airTemperature.toFixed(0)}°C
+   775→              </span>
+   776→            </p>
+   777→          ) : (
+   778→            <Unavailable className="mt-0.5 block" />
+   779→          )}
+   780→        </div>
+   781→      </CardContent>
+   782→    </Card>
+   783→  );
+   784→}
+   785→
+   786→function WindCard({ data }: { data: SeaConditionData }) {
+   787→  const dir = data.windDirection;
+   788→  const compass = degToCompass(dir);
+   789→  // Wind direction is the direction FROM which the wind blows.
+   790→  // Rotate the arrow so it points downwind (toward where the wind is going).
+   791→  const rotation = dir != null ? (dir + 180) % 360 : 0;
+   792→  return (
+   793→    <Card className="glass-card">
+   794→      <CardHeader>
+   795→        <CardTitle className="flex items-center gap-2 text-base">
+   796→          <Wind className="size-4 text-primary" /> Wind
+   797→        </CardTitle>
+   798→        <CardDescription>Surface wind at 10m above sea level.</CardDescription>
+   799→      </CardHeader>
+   800→      <CardContent className="flex items-center justify-between gap-3">
+   801→        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+   802→          <div>
+   803→            <p className="text-xs text-muted-foreground">Speed</p>
+   804→            {data.windSpeed != null ? (
+   805→              <p className="font-semibold tabular-nums">
+   806→                {data.windSpeed.toFixed(1)}
+   807→                <span className="ml-1 text-xs font-normal text-muted-foreground">km/h</span>
+   808→              </p>
+   809→            ) : <Unavailable />}
+   810→          </div>
+   811→          <div>
+   812→            <p className="text-xs text-muted-foreground">Gusts</p>
+   813→            {data.windGusts != null ? (
+   814→              <p className="font-semibold tabular-nums">
+   815→                {data.windGusts.toFixed(1)}
+   816→                <span className="ml-1 text-xs font-normal text-muted-foreground">km/h</span>
+   817→              </p>
+   818→            ) : <Unavailable />}
+   819→          </div>
+   820→          <div className="col-span-2">
+   821→            <p className="text-xs text-muted-foreground">Direction</p>
+   822→            {dir != null ? (
+   823→              <p className="font-semibold tabular-nums">
+   824→                {dir.toFixed(0)}°
+   825→                {compass && (
+   826→                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+   827→                    from {compass}
+   828→                  </span>
+   829→                )}
+   830→              </p>
+   831→            ) : <Unavailable />}
+   832→          </div>
+   833→        </div>
+   834→        <div
+   835→          className="flex size-16 shrink-0 items-center justify-center rounded-full border border-border/60 bg-muted/30"
+   836→          aria-label={compass ? `Wind from ${compass}` : "Wind direction"}
+   837→        >
+   838→          <Navigation
+   839→            className="size-8 text-primary transition-transform duration-500"
+   840→            style={{ transform: `rotate(${rotation}deg)` }}
+   841→            aria-hidden="true"
+   842→          />
+   843→        </div>
+   844→      </CardContent>
+   845→    </Card>
+   846→  );
+   847→}
+   848→
+   849→function WaveCard({ data }: { data: SeaConditionData }) {
+   850→  const dir = data.waveDirection;
+   851→  const compass = degToCompass(dir);
+   852→  const rotation = dir != null ? (dir + 180) % 360 : 0;
+   853→  return (
+   854→    <Card className="glass-card">
+   855→      <CardHeader>
+   856→        <CardTitle className="flex items-center gap-2 text-base">
+   857→          <Waves className="size-4 text-primary" /> Waves
+   858→        </CardTitle>
+   859→        <CardDescription>Sea state at the surface.</CardDescription>
+   860→      </CardHeader>
+   861→      <CardContent className="flex items-center justify-between gap-3">
+   862→        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+   863→          <div>
+   864→            <p className="text-xs text-muted-foreground">Height</p>
+   865→            {data.waveHeight != null ? (
+   866→              <p className="font-semibold tabular-nums">
+   867→                {data.waveHeight.toFixed(1)}
+   868→                <span className="ml-1 text-xs font-normal text-muted-foreground">m</span>
+   869→              </p>
+   870→            ) : <Unavailable />}
+   871→          </div>
+   872→          <div>
+   873→            <p className="text-xs text-muted-foreground">Period</p>
+   874→            {data.wavePeriod != null ? (
+   875→              <p className="font-semibold tabular-nums">
+   876→                {data.wavePeriod.toFixed(0)}
+   877→                <span className="ml-1 text-xs font-normal text-muted-foreground">s</span>
+   878→              </p>
+   879→            ) : <Unavailable />}
+   880→          </div>
+   881→          <div className="col-span-2">
+   882→            <p className="text-xs text-muted-foreground">Direction</p>
+   883→            {dir != null ? (
+   884→              <p className="font-semibold tabular-nums">
+   885→                {dir.toFixed(0)}°
+   886→                {compass && (
+   887→                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+   888→                    from {compass}
+   889→                  </span>
+   890→                )}
+   891→              </p>
+   892→            ) : <Unavailable />}
+   893→          </div>
+   894→        </div>
+   895→        <div
+   896→          className="flex size-16 shrink-0 items-center justify-center rounded-full border border-border/60 bg-muted/30"
+   897→          aria-label={compass ? `Waves from ${compass}` : "Wave direction"}
+   898→        >
+   899→          <Compass
+   900→            className="size-8 text-primary transition-transform duration-500"
+   901→            style={{ transform: `rotate(${rotation}deg)` }}
+   902→            aria-hidden="true"
+   903→          />
+   904→        </div>
+   905→      </CardContent>
+   906→    </Card>
+   907→  );
+   908→}
+   909→
+   910→function TemperatureCard({ data }: { data: SeaConditionData }) {
+   911→  return (
+   912→    <Card className="glass-card">
+   913→      <CardHeader>
+   914→        <CardTitle className="flex items-center gap-2 text-base">
+   915→          <Thermometer className="size-4 text-primary" /> Temperature
+   916→        </CardTitle>
+   917→        <CardDescription>Air, sea surface & humidity.</CardDescription>
+   918→      </CardHeader>
+   919→      <CardContent className="grid grid-cols-3 gap-3 text-sm">
+   920→        <div>
+   921→          <p className="text-xs text-muted-foreground">Air</p>
+   922→          {data.airTemperature != null ? (
+   923→            <p className="font-semibold tabular-nums">
+   924→              {data.airTemperature.toFixed(0)}
+   925→              <span className="ml-0.5 text-xs font-normal text-muted-foreground">°C</span>
+   926→            </p>
+   927→          ) : <Unavailable />}
+   928→        </div>
+   929→        <div>
+   930→          <p className="text-xs text-muted-foreground">Sea surface</p>
+   931→          {data.seaSurfaceTemperature != null ? (
+   932→            <p className="font-semibold tabular-nums">
+   933→              {data.seaSurfaceTemperature.toFixed(0)}
+   934→              <span className="ml-0.5 text-xs font-normal text-muted-foreground">°C</span>
+   935→            </p>
+   936→          ) : <Unavailable />}
+   937→        </div>
+   938→        <div>
+   939→          <p className="text-xs text-muted-foreground">Humidity</p>
+   940→          {data.humidity != null ? (
+   941→            <p className="font-semibold tabular-nums">
+   942→              {data.humidity.toFixed(0)}
+   943→              <span className="ml-0.5 text-xs font-normal text-muted-foreground">%</span>
+   944→            </p>
+   945→          ) : <Unavailable />}
+   946→        </div>
+   947→      </CardContent>
+   948→    </Card>
+   949→  );
+   950→}
+   951→
+   952→function AtmosphericsCard({ data }: { data: SeaConditionData }) {
+   953→  return (
+   954→    <Card className="glass-card">
+   955→      <CardHeader>
+   956→        <CardTitle className="flex items-center gap-2 text-base">
+   957→          <Gauge className="size-4 text-primary" /> Atmospherics
+   958→        </CardTitle>
+   959→        <CardDescription>Pressure, precipitation & visibility.</CardDescription>
+   960→      </CardHeader>
+   961→      <CardContent className="grid grid-cols-3 gap-3 text-sm">
+   962→        <div>
+   963→          <p className="text-xs text-muted-foreground">Pressure</p>
+   964→          {data.pressure != null ? (
+   965→            <p className="font-semibold tabular-nums">
+   966→              {data.pressure.toFixed(0)}
+   967→              <span className="ml-0.5 text-xs font-normal text-muted-foreground">hPa</span>
+   968→            </p>
+   969→          ) : <Unavailable />}
+   970→        </div>
+   971→        <div>
+   972→          <p className="text-xs text-muted-foreground">Precip.</p>
+   973→          {data.precipitation != null ? (
+   974→            <p className="font-semibold tabular-nums">
+   975→              {data.precipitation.toFixed(1)}
+   976→              <span className="ml-0.5 text-xs font-normal text-muted-foreground">mm</span>
+   977→            </p>
+   978→          ) : <Unavailable />}
+   979→        </div>
+   980→        <div>
+   981→          <p className="text-xs text-muted-foreground">Visibility</p>
+   982→          {data.visibility != null ? (
+   983→            <p className="font-semibold tabular-nums">
+   984→              {data.visibility >= 1000
+   985→                ? `${(data.visibility / 1000).toFixed(1)}`
+   986→                : `${data.visibility.toFixed(0)}`}
+   987→              <span className="ml-0.5 text-xs font-normal text-muted-foreground">
+   988→                {data.visibility >= 1000 ? "km" : "m"}
+   989→              </span>
+   990→            </p>
+   991→          ) : <Unavailable />}
+   992→        </div>
+   993→      </CardContent>
+   994→    </Card>
+   995→  );
+   996→}
+   997→
+   998→function SunCard({ data }: { data: SeaConditionData }) {
+   999→  const sunrise = formatHHMM(data.sunrise);
+  1000→  const sunset = formatHHMM(data.sunset);
+  1001→  return (
+  1002→    <Card className="glass-card">
+  1003→      <CardHeader>
+  1004→        <CardTitle className="flex items-center gap-2 text-base">
+  1005→          <Sunrise className="size-4 text-primary" /> Sun
+  1006→        </CardTitle>
+  1007→        <CardDescription>
+  1008→          {data.utcOffsetSeconds != null
+  1009→            ? `UTC ${data.utcOffsetSeconds >= 0 ? "+" : ""}${(data.utcOffsetSeconds / 3600).toFixed(1)}h local`
+  1010→            : "Local sunrise & sunset"}
+  1011→        </CardDescription>
+  1012→      </CardHeader>
+  1013→      <CardContent className="grid grid-cols-2 gap-3 text-sm">
+  1014→        <div className="flex items-center gap-2">
+  1015→          <Sunrise className="size-5 text-amber-400" />
+  1016→          <div>
+  1017→            <p className="text-xs text-muted-foreground">Sunrise</p>
+  1018→            <p className="font-semibold tabular-nums">{sunrise ?? <Unavailable />}</p>
+  1019→          </div>
+  1020→        </div>
+  1021→        <div className="flex items-center gap-2">
+  1022→          <Sunset className="size-5 text-purple-400" />
+  1023→          <div>
+  1024→            <p className="text-xs text-muted-foreground">Sunset</p>
+  1025→            <p className="font-semibold tabular-nums">{sunset ?? <Unavailable />}</p>
+  1026→          </div>
+  1027→        </div>
+  1028→      </CardContent>
+  1029→    </Card>
+  1030→  );
+  1031→}
+  1032→
+  1033→const MARINE_CHART_CONFIG: ChartConfig = {
+  1034→  waveHeight: { label: "Wave Height (m)", color: "var(--chart-1)" },
+  1035→  windSpeed: { label: "Wind Speed (km/h)", color: "var(--chart-2)" },
+  1036→};
+  1037→
+  1038→function MarineConditionChart({
+  1039→  data,
+  1040→  loading,
+  1041→}: {
+  1042→  data: { time: string; waveHeight: number | null; windSpeed: number | null }[];
+  1043→  loading: boolean;
+  1044→}) {
+  1045→  const hasWave = data.some((d) => d.waveHeight != null);
+  1046→  const hasWind = data.some((d) => d.windSpeed != null);
+  1047→
+  1048→  if ((loading && data.length === 0) || (!hasWave && !hasWind)) {
+  1049→    return (
+  1050→      <Card className="glass-card">
+  1051→        <CardHeader>
+  1052→          <CardTitle className="flex items-center gap-2 text-base">
+  1053→            <Waves className="size-4 text-primary" /> 24-Hour Marine Forecast
+  1054→          </CardTitle>
+  1055→          <CardDescription>
+  1056→            {loading ? "Loading hourly forecast…" : "No hourly forecast data available for this location."}
+  1057→          </CardDescription>
+  1058→        </CardHeader>
+  1059→        <CardContent>
+  1060→          <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">
+  1061→            {loading ? (
+  1062→              <Loader2 className="size-6 animate-spin" />
+  1063→            ) : (
+  1064→              <Unavailable />
+  1065→            )}
+  1066→          </div>
+  1067→        </CardContent>
+  1068→      </Card>
+  1069→    );
+  1070→  }
+  1071→
+  1072→  return (
+  1073→    <Card className="glass-card">
+  1074→      <CardHeader>
+  1075→        <CardTitle className="flex items-center gap-2 text-base">
+  1076→          <Waves className="size-4 text-primary" /> 24-Hour Marine Forecast
+  1077→        </CardTitle>
+  1078→        <CardDescription>
+  1079→          Hourly wave height and wind speed at the selected location.
+  1080→        </CardDescription>
+  1081→      </CardHeader>
+  1082→      <CardContent>
+  1083→        <ChartContainer config={MARINE_CHART_CONFIG} className="h-[260px] w-full">
+  1084→          <AreaChart data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
+  1085→            <defs>
+  1086→              <linearGradient id="gradWave" x1="0" y1="0" x2="0" y2="1">
+  1087→                <stop offset="0%" stopColor="var(--color-waveHeight)" stopOpacity={0.7} />
+  1088→                <stop offset="100%" stopColor="var(--color-waveHeight)" stopOpacity={0.05} />
+  1089→              </linearGradient>
+  1090→              <linearGradient id="gradWind" x1="0" y1="0" x2="0" y2="1">
+  1091→                <stop offset="0%" stopColor="var(--color-windSpeed)" stopOpacity={0.5} />
+  1092→                <stop offset="100%" stopColor="var(--color-windSpeed)" stopOpacity={0.05} />
+  1093→              </linearGradient>
+  1094→            </defs>
+  1095→            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.3} />
+  1096→            <XAxis
+  1097→              dataKey="time"
+  1098→              tickLine={false}
+  1099→              axisLine={false}
+  1100→              tickMargin={8}
+  1101→              minTickGap={24}
+  1102→            />
+  1103→            <YAxis
+  1104→              yAxisId="left"
+  1105→              tickLine={false}
+  1106→              axisLine={false}
+  1107→              width={36}
+  1108→            />
+  1109→            <YAxis
+  1110→              yAxisId="right"
+  1111→              orientation="right"
+  1112→              tickLine={false}
+  1113→              axisLine={false}
+  1114→              width={36}
+  1115→            />
+  1116→            <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
+  1117→            {hasWave && (
+  1118→              <Area
+  1119→                yAxisId="left"
+  1120→                dataKey="waveHeight"
+  1121→                type="monotone"
+  1122→                stroke="var(--color-waveHeight)"
+  1123→                fill="url(#gradWave)"
+  1124→                strokeWidth={2}
+  1125→                connectNulls
+  1126→                name="Wave Height (m)"
+  1127→              />
+  1128→            )}
+  1129→            {hasWind && (
+  1130→              <Area
+  1131→                yAxisId="right"
+  1132→                dataKey="windSpeed"
+  1133→                type="monotone"
+  1134→                stroke="var(--color-windSpeed)"
+  1135→                fill="url(#gradWind)"
+  1136→                strokeWidth={2}
+  1137→                connectNulls
+  1138→                name="Wind Speed (km/h)"
+  1139→              />
+  1140→            )}
+  1141→          </AreaChart>
+  1142→        </ChartContainer>
+  1143→        <div className="mt-3 flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
+  1144→          <span className="flex items-center gap-1.5">
+  1145→            <span className="size-2 rounded-[2px]" style={{ backgroundColor: "var(--chart-1)" }} />
+  1146→            Wave height (m)
+  1147→          </span>
+  1148→          <span className="flex items-center gap-1.5">
+  1149→            <span className="size-2 rounded-[2px]" style={{ backgroundColor: "var(--chart-2)" }} />
+  1150→            Wind speed (km/h)
+  1151→          </span>
+  1152→        </div>
+  1153→      </CardContent>
+  1154→    </Card>
+  1155→  );
+  1156→}
+  1157→

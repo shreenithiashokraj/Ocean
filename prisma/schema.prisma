@@ -1,0 +1,214 @@
+// Fisherman Module — Prisma schema (SQLite)
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & Users ────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  // "ADMIN" | "RESEARCHER" | "FISHERMAN" — enforced in app layer + backend guards
+  role         String   @default("FISHERMAN")
+  passwordHash String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile        UserProfile?
+  sessions       Session[]
+  seaConditions  SeaCondition[]
+  alerts         WeatherAlert[]   @relation("AlertAssignee")
+  fishAnalyses   FishAnalysis[]
+  savedLocations SavedLocation[]
+  notifications  Notification[]
+  passwordResets PasswordReset[]
+  apiLogs        ApiLog[]
+}
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone     String?
+  country   String?
+  vesselName String?
+  licenseNumber String?
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ─── Marine / Weather domain ────────────────────────────────────────────────
+
+model SeaCondition {
+  id            String   @id @default(cuid())
+  userId        String?  // owner (null = shared/system record)
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  latitude      Float
+  longitude     Float
+  locationLabel String?
+  // Stored as JSON string (SQLite has no native JSON column)
+  payload       String
+  source        String   @default("open-meteo")
+  isDemo        Boolean  @default(false)
+  recordedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([latitude, longitude])
+}
+
+model WeatherAlert {
+  id          String   @id @default(cuid())
+  userId      String?  // null = broadcast to all
+  user        User?    @relation("AlertAssignee", fields: [userId], references: [id], onDelete: SetNull)
+  title       String
+  type        String   // WIND | WAVE | RAIN | STORM | VISIBILITY | SEA_STATE | TEMPERATURE
+  severity    String   // LOW | MODERATE | HIGH | CRITICAL
+  description String
+  location    String?
+  latitude    Float?
+  longitude   Float?
+  startTime   DateTime
+  endTime     DateTime?
+  source      String   @default("Fisherman Module Alert Engine")
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([severity])
+}
+
+model AlertThreshold {
+  id          String   @id @default(cuid())
+  metric      String   @unique // e.g. windSpeedKmh, waveHeightM, precipitationMm
+  caution     Float
+  high        Float
+  critical    Float
+  unit        String
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── AI Fish Analysis ────────────────────────────────────────────────────────
+
+model FishAnalysis {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageDataUrl    String
+  species         String?
+  confidence      Float?
+  alternatives    String?  // JSON string
+  sizeRange       String?
+  weightRange     String?
+  characteristics String?  // JSON string
+  notes           String?
+  qualityWarning  String?
+  pricePerKg      String?
+  currency        String?
+  market          String?
+  priceDate       DateTime?
+  priceSource     String?
+  rawResponse     String?  // JSON string of full AI response
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─── Location & Navigation ──────────────────────────────────────────────────
+
+model SavedLocation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  latitude    Float
+  longitude   Float
+  notes       String?
+  category    String   @default("fishing") // fishing | harbor | home | waypoint
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+model FishingSpot {
+  id          String   @id @default(cuid())
+  name        String
+  latitude    Float
+  longitude   Float
+  region      String?
+  species     String?  // comma separated species when known
+  depthM      Float?
+  bottomType  String?  // sand | reef | rocky | mud
+  source      String   @default("OpenStreetMap")
+  createdAt   DateTime @default(now())
+
+  @@index([latitude, longitude])
+}
+
+// ─── Notifications, logs, settings ────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("info") // info | success | warning | alert
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model ApiLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  service     String   // weather | marine | fish-analysis | osm
+  endpoint    String
+  method      String   @default("GET")
+  status      Int
+  durationMs  Int?
+  message     String?
+  createdAt   DateTime @default(now())
+
+  @@index([service])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  category  String   @default("general") // general | api | alert | branding
+  updatedAt DateTime @updatedAt
+}
