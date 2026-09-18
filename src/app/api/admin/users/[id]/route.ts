@@ -67,9 +67,34 @@ export async function PATCH(
   }
 
   // Ensure the target user exists (404 if not).
-  const existing = await db.user.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.user.findUnique({
+    where: { id },
+    select: { id: true, role: true, isActive: true },
+  });
   if (!existing) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  // ── Last-active-admin protection ───────────────────────────────────────
+  // If the target is currently an ACTIVE ADMIN and the change would remove
+  // them from the active-admin set (deactivate OR demote to non-ADMIN),
+  // ensure at least one other active admin remains. This prevents an admin
+  // from accidentally removing the last administrative access.
+  const removingAdmin =
+    existing.role === "ADMIN" && existing.isActive && (role !== "ADMIN" || isActive === false);
+  if (removingAdmin) {
+    const activeAdminCount = await db.user.count({
+      where: { role: "ADMIN", isActive: true },
+    });
+    if (activeAdminCount <= 1) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot remove the last active administrator. Promote another user to ADMIN first.",
+        },
+        { status: 400 }
+      );
+    }
   }
 
   await db.user.update({

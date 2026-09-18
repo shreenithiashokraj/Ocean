@@ -56,6 +56,8 @@ export type AlertType =
   | "VISIBILITY"
   | "SEA_STATE"
   | "TEMPERATURE";
+/** Phase 2: alert lifecycle. */
+export type AlertStatus = "ACTIVE" | "ACKNOWLEDGED" | "EXPIRED" | "RESOLVED";
 
 export interface WeatherAlert {
   id: string;
@@ -69,6 +71,26 @@ export interface WeatherAlert {
   startTime: string;
   endTime: string | null;
   source: string;
+  isRead: boolean;
+  /** Phase 2: lifecycle + metric context */
+  status: AlertStatus;
+  metric: string | null;
+  actualValue: string | null;
+  thresholdValue: string | null;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+/** Phase 2: notification with severity + related alert. */
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  type: string; // info | success | warning | alert
+  severity: AlertSeverity | null;
+  category: string; // general | alert | system | analysis
+  alertId: string | null;
   isRead: boolean;
   createdAt: string;
 }

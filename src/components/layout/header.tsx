@@ -201,7 +201,7 @@ export function Header() {
               <RoleBadge role={user!.role} className="mt-1 w-fit" />
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setView("fisherman.settings" as never)}>
+            <DropdownMenuItem onClick={() => setView("fisherman.profile")}>
               <UserIcon className="mr-2 size-4" /> Profile & Settings
             </DropdownMenuItem>
             {user?.role === "ADMIN" && (

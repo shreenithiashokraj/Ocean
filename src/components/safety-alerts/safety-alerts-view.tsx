@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   Bell,
   CheckCheck,
+  CheckCircle2,
   Clock,
   CloudRain,
   Eye,
@@ -31,7 +33,12 @@ import {
 import { LoadingState, ErrorState, EmptyState } from "@/components/common/states";
 import { StatCard } from "@/components/common/stat-card";
 import { api, ApiError } from "@/lib/api";
-import type { AlertSeverity, AlertType, WeatherAlert } from "@/lib/types";
+import type {
+  AlertSeverity,
+  AlertStatus,
+  AlertType,
+  WeatherAlert,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // ── Severity styling ────────────────────────────────────────────────────
@@ -63,6 +70,33 @@ const SEVERITY_STYLES: Record<
     chip:
       "border-rose-500/40 bg-rose-500/15 text-rose-300",
     label: "Critical",
+  },
+};
+
+// ── Lifecycle status styling (icon + text + color, never color alone) ───
+const STATUS_META: Record<
+  AlertStatus,
+  { icon: LucideIcon; chip: string; label: string }
+> = {
+  ACTIVE: {
+    icon: Activity,
+    chip: "border-rose-500/40 bg-rose-500/15 text-rose-300",
+    label: "Active",
+  },
+  ACKNOWLEDGED: {
+    icon: CheckCircle2,
+    chip: "border-sky-500/40 bg-sky-500/15 text-sky-300",
+    label: "Acknowledged",
+  },
+  EXPIRED: {
+    icon: Clock,
+    chip: "border-slate-500/40 bg-slate-500/15 text-slate-300",
+    label: "Expired",
+  },
+  RESOLVED: {
+    icon: CheckCheck,
+    chip: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+    label: "Resolved",
   },
 };
 
@@ -181,6 +215,49 @@ export function SafetyAlertsView() {
       } catch {
         /* best-effort — revert handled by next refresh */
       }
+    }
+  }
+
+  // ── Phase 2: lifecycle actions ───────────────────────────────────────
+  async function acknowledge(a: WeatherAlert) {
+    try {
+      await api.acknowledgeAlert(a.id);
+      toast.success(`Alert acknowledged`);
+      setAlerts((prev) =>
+        (prev ?? []).map((x) =>
+          x.id === a.id
+            ? { ...x, status: "ACKNOWLEDGED", isRead: true }
+            : x,
+        ),
+      );
+      setSelected((s) =>
+        s && s.id === a.id
+          ? { ...s, status: "ACKNOWLEDGED", isRead: true }
+          : s,
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to acknowledge");
+    }
+  }
+
+  async function resolve(a: WeatherAlert) {
+    try {
+      await api.resolveAlert(a.id);
+      toast.success(`Alert resolved`);
+      setAlerts((prev) =>
+        (prev ?? []).map((x) =>
+          x.id === a.id
+            ? { ...x, status: "RESOLVED", isRead: true }
+            : x,
+        ),
+      );
+      setSelected((s) =>
+        s && s.id === a.id
+          ? { ...s, status: "RESOLVED", isRead: true }
+          : s,
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to resolve");
     }
   }
 
@@ -368,6 +445,22 @@ export function SafetyAlertsView() {
                       >
                         {sev.label}
                       </span>
+                      {(() => {
+                        const st = STATUS_META[a.status] ?? STATUS_META.ACTIVE;
+                        const StIcon = st.icon;
+                        return (
+                          <span
+                            className={cn(
+                              "flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                              st.chip,
+                            )}
+                            aria-label={`Status: ${st.label}`}
+                          >
+                            <StIcon className="size-3" aria-hidden />
+                            {st.label}
+                          </span>
+                        );
+                      })()}
                       {a.location && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                           <MapPin className="size-3" aria-hidden />
@@ -455,11 +548,64 @@ export function SafetyAlertsView() {
                       {formatTime(selected.endTime)}
                     </dd>
                   </div>
+                  <div>
+                    <dt className="text-muted-foreground">Metric</dt>
+                    <dd className="font-medium">
+                      {selected.metric ?? "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Actual / threshold</dt>
+                    <dd className="font-medium">
+                      {selected.actualValue ?? "—"} / {selected.thresholdValue ?? "—"}
+                    </dd>
+                  </div>
                   <div className="col-span-2">
                     <dt className="text-muted-foreground">Source</dt>
                     <dd className="font-medium">{selected.source}</dd>
                   </div>
                 </dl>
+
+                {/* Lifecycle status + actions */}
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-card/40 p-3 text-xs">
+                  {(() => {
+                    const st = STATUS_META[selected.status] ?? STATUS_META.ACTIVE;
+                    const StIcon = st.icon;
+                    return (
+                      <span
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md border px-2 py-1 font-semibold uppercase tracking-wide",
+                          st.chip,
+                        )}
+                      >
+                        <StIcon className="size-3.5" aria-hidden />
+                        {st.label}
+                      </span>
+                    );
+                  })()}
+                  <div className="ml-auto flex gap-2">
+                    {(selected.status === "ACTIVE" ||
+                      selected.status === "EXPIRED") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void acknowledge(selected)}
+                      >
+                        <CheckCircle2 className="size-3.5" aria-hidden />
+                        Acknowledge
+                      </Button>
+                    )}
+                    {selected.status !== "RESOLVED" && (
+                      <Button
+                        size="sm"
+                        onClick={() => void resolve(selected)}
+                      >
+                        <CheckCheck className="size-3.5" aria-hidden />
+                        Resolve
+                      </Button>
+                    )}
+                  </div>
+                </div>
 
                 {selected.isRead ? (
                   <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

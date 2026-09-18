@@ -1,0 +1,757 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Researcher Fishing Data & Reports — Fisherman Module.
+     5→ *
+     6→ * Full aggregate dashboard for RESEARCHER (and ADMIN) accounts. Pulls
+     7→ * `/api/researcher/fishing-data` once on mount and renders:
+     8→ *   - Species distribution (PieChart + sortable table).
+     9→ *   - Confidence buckets (BarChart).
+    10→ *   - Monthly analysis trend (AreaChart, last 6 months).
+    11→ *   - Fishing spots table (curated, environmental).
+    12→ *   - Alert severity summary (cards).
+    13→ *   - "Export CSV" button — downloads speciesDistribution as CSV
+    14→ *     (client-side Blob download, no server round-trip).
+    15→ *
+    16→ * No PII is displayed — only aggregate counts + species names + curated
+    17→ * spot data. Sticky footer handled by AppShell.
+    18→ */
+    19→
+    20→import { useCallback, useEffect, useMemo, useState } from "react";
+    21→import {
+    22→  Activity,
+    23→  AlertOctagon,
+    24→  AlertTriangle,
+    25→  Database,
+    26→  Download,
+    27→  Fish,
+    28→  Info,
+    29→  MapPin,
+    30→  RefreshCw,
+    31→  ShieldAlert,
+    32→  Waves,
+    33→} from "lucide-react";
+    34→import {
+    35→  Area,
+    36→  AreaChart,
+    37→  Bar,
+    38→  BarChart,
+    39→  CartesianGrid,
+    40→  Cell,
+    41→  Pie,
+    42→  PieChart,
+    43→  XAxis,
+    44→  YAxis,
+    45→} from "recharts";
+    46→import {
+    47→  Card,
+    48→  CardContent,
+    49→  CardDescription,
+    50→  CardHeader,
+    51→  CardTitle,
+    52→} from "@/components/ui/card";
+    53→import { Button } from "@/components/ui/button";
+    54→import { Badge } from "@/components/ui/badge";
+    55→import {
+    56→  Table,
+    57→  TableBody,
+    58→  TableCell,
+    59→  TableHead,
+    60→  TableHeader,
+    61→  TableRow,
+    62→} from "@/components/ui/table";
+    63→import {
+    64→  ChartContainer,
+    65→  ChartTooltip,
+    66→  ChartTooltipContent,
+    67→  type ChartConfig,
+    68→} from "@/components/ui/chart";
+    69→import { api, ApiError } from "@/lib/api";
+    70→import { toast } from "sonner";
+    71→import { StatCard } from "@/components/common/stat-card";
+    72→import {
+    73→  EmptyState,
+    74→  ErrorState,
+    75→  LoadingState,
+    76→  Unavailable,
+    77→} from "@/components/common/states";
+    78→
+    79→// ── Types ─────────────────────────────────────────────────────────────────
+    80→
+    81→interface ResearcherFishingData {
+    82→  speciesDistribution: {
+    83→    species: string;
+    84→    count: number;
+    85→    avgConfidence: number | null;
+    86→  }[];
+    87→  confidenceBuckets: { bucket: string; count: number }[];
+    88→  totalAnalyses: number;
+    89→  recentSeaConditions: {
+    90→    id: string;
+    91→    latitude: number;
+    92→    longitude: number;
+    93→    locationLabel: string | null;
+    94→    source: string;
+    95→    isDemo: boolean;
+    96→    recordedAt: string;
+    97→    payload: string;
+    98→  }[];
+    99→  alertSummary: { severity: string; count: number; unread: number }[];
+   100→  fishingSpots: {
+   101→    id: string;
+   102→    name: string;
+   103→    latitude: number;
+   104→    longitude: number;
+   105→    region: string | null;
+   106→    species: string | null;
+   107→    depthM: number | null;
+   108→    bottomType: string | null;
+   109→    source: string;
+   110→  }[];
+   111→  monthlyTrend: { month: string; analyses: number }[];
+   112→}
+   113→
+   114→// ── Chart helpers ─────────────────────────────────────────────────────────
+   115→
+   116→const SPECIES_COLORS = [
+   117→  "#22d3ee",
+   118→  "#34d399",
+   119→  "#f59e0b",
+   120→  "#a78bfa",
+   121→  "#fb7185",
+   122→  "#60a5fa",
+   123→  "#f472b6",
+   124→  "#facc15",
+   125→  "#2dd4bf",
+   126→  "#c084fc",
+   127→];
+   128→
+   129→const SPECIES_CHART_CONFIG: ChartConfig = {
+   130→  count: { label: "Observations", color: "#22d3ee" },
+   131→};
+   132→
+   133→const CONFIDENCE_CHART_CONFIG: ChartConfig = {
+   134→  count: { label: "Analyses", color: "#34d399" },
+   135→};
+   136→
+   137→const TREND_CHART_CONFIG: ChartConfig = {
+   138→  analyses: { label: "Analyses", color: "#22d3ee" },
+   139→};
+   140→
+   141→// ── Severity styling (mirror safety-alerts view) ──────────────────────────
+   142→
+   143→const SEVERITY_STYLES: Record<
+   144→  string,
+   145→  { chip: string; label: string; icon: React.ComponentType<{ className?: string }> }
+   146→> = {
+   147→  LOW: { chip: "border-slate-500/40 bg-slate-500/15 text-slate-300", label: "Low", icon: Info },
+   148→  MODERATE: { chip: "border-amber-500/40 bg-amber-500/15 text-amber-300", label: "Moderate", icon: AlertTriangle },
+   149→  HIGH: { chip: "border-orange-500/40 bg-orange-500/15 text-orange-300", label: "High", icon: AlertOctagon },
+   150→  CRITICAL: { chip: "border-rose-500/40 bg-rose-500/15 text-rose-300", label: "Critical", icon: ShieldAlert },
+   151→};
+   152→
+   153→// ── Number / time helpers ─────────────────────────────────────────────────
+   154→
+   155→function pct(n: number | null): string {
+   156→  if (n == null || !Number.isFinite(n)) return "—";
+   157→  return `${Math.round(n * 100)}%`;
+   158→}
+   159→
+   160→// ── Component ─────────────────────────────────────────────────────────────
+   161→
+   162→export function ResearcherFishingDataView() {
+   163→  const [data, setData] = useState<ResearcherFishingData | null>(null);
+   164→  const [loading, setLoading] = useState<boolean>(true);
+   165→  const [error, setError] = useState<string | null>(null);
+   166→
+   167→  const fetchData = useCallback(async () => {
+   168→    setLoading(true);
+   169→    setError(null);
+   170→    try {
+   171→      const res = await api.researcherFishingData();
+   172→      setData(res as ResearcherFishingData);
+   173→    } catch (err) {
+   174→      const msg =
+   175→        err instanceof ApiError
+   176→          ? err.message
+   177→          : err instanceof Error
+   178→            ? err.message
+   179→            : "Failed to load research data.";
+   180→      setError(msg);
+   181→      toast.error("Failed to load aggregate fishing data.");
+   182→    } finally {
+   183→      setLoading(false);
+   184→    }
+   185→  }, []);
+   186→
+   187→  useEffect(() => {
+   188→    void fetchData();
+   189→  }, [fetchData]);
+   190→
+   191→  // ── CSV export (species distribution) ───────────────────────────────────
+   192→  const handleExportCsv = useCallback(() => {
+   193→    if (!data || data.speciesDistribution.length === 0) {
+   194→      toast.info("No species data to export.");
+   195→      return;
+   196→    }
+   197→    const rows = [
+   198→      ["species", "count", "avg_confidence"],
+   199→      ...data.speciesDistribution.map((s) => [
+   200→        s.species,
+   201→        String(s.count),
+   202→        s.avgConfidence != null ? s.avgConfidence.toFixed(4) : "",
+   203→      ]),
+   204→    ];
+   205→    // Quote species names in case they contain commas.
+   206→    const csv = rows
+   207→      .map((r) =>
+   208→        r
+   209→          .map((cell) => {
+   210→            const v = String(cell);
+   211→            if (v.includes(",") || v.includes("\"") || v.includes("\n")) {
+   212→              return `"${v.replace(/"/g, "\"\"")}"`;
+   213→            }
+   214→            return v;
+   215→          })
+   216→          .join(",")
+   217→      )
+   218→      .join("\n");
+   219→    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+   220→    const url = URL.createObjectURL(blob);
+   221→    const a = document.createElement("a");
+   222→    a.href = url;
+   223→    const stamp = new Date().toISOString().slice(0, 10);
+   224→    a.download = `species-distribution-${stamp}.csv`;
+   225→    document.body.appendChild(a);
+   226→    a.click();
+   227→    document.body.removeChild(a);
+   228→    URL.revokeObjectURL(url);
+   229→    toast.success("CSV exported.");
+   230→  }, [data]);
+   231→
+   232→  // Memo: species chart data with stable color mapping
+   233→  const speciesChartData = useMemo(() => {
+   234→    if (!data) return [];
+   235→    return data.speciesDistribution.map((s, idx) => ({
+   236→      name: s.species,
+   237→      value: s.count,
+   238→      fill: SPECIES_COLORS[idx % SPECIES_COLORS.length],
+   239→    }));
+   240→  }, [data]);
+   241→
+   242→  const totalAlerts =
+   243→    data?.alertSummary.reduce((sum, a) => sum + a.count, 0) ?? 0;
+   244→  const unreadAlerts =
+   245→    data?.alertSummary.reduce((sum, a) => sum + a.unread, 0) ?? 0;
+   246→
+   247→  return (
+   248→    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+   249→      {/* ── Header ─────────────────────────────────────────────────────────── */}
+   250→      <header className="glass-card animate-fade-up rounded-2xl p-5 sm:p-6">
+   251→        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+   252→          <div>
+   253→            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+   254→              Fishing Data &amp; Reports
+   255→            </h1>
+   256→            <p className="mt-1 text-sm text-muted-foreground">
+   257→              Aggregate observations across the fleet — species distribution,
+   258→              model confidence, trends, and curated fishing grounds.
+   259→            </p>
+   260→          </div>
+   261→          <div className="flex flex-wrap gap-2">
+   262→            <Button
+   263→              variant="outline"
+   264→              size="sm"
+   265→              onClick={() => void fetchData()}
+   266→              disabled={loading}
+   267→            >
+   268→              <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+   269→              Refresh
+   270→            </Button>
+   271→            <Button
+   272→              size="sm"
+   273→              onClick={handleExportCsv}
+   274→              disabled={!data || data.speciesDistribution.length === 0}
+   275→            >
+   276→              <Download className="size-4" />
+   277→              Export CSV
+   278→            </Button>
+   279→          </div>
+   280→        </div>
+   281→        <aside
+   282→          role="note"
+   283→          className="mt-4 flex items-start gap-2 rounded-lg border border-purple-500/20 bg-purple-500/5 p-3 text-xs text-purple-200"
+   284→        >
+   285→          <Info className="size-4 shrink-0 text-purple-300" />
+   286→          <p>
+   287→            Data shown is aggregated for research purposes. Individual
+   288→            fisherman identities, SavedLocations, and personal account info
+   289→            are not exposed by this view.
+   290→          </p>
+   291→        </aside>
+   292→      </header>
+   293→
+   294→      {/* ── Body ───────────────────────────────────────────────────────────── */}
+   295→      {error ? (
+   296→        <div className="mt-6">
+   297→          <ErrorState
+   298→            title="Failed to load report"
+   299→            message={error}
+   300→            onRetry={() => void fetchData()}
+   301→          />
+   302→        </div>
+   303→      ) : loading ? (
+   304→        <div className="mt-6">
+   305→          <LoadingState label="Aggregating research data…" />
+   306→        </div>
+   307→      ) : data ? (
+   308→        <>
+   309→          {/* ── Top stats ─────────────────────────────────────────────────── */}
+   310→          <section
+   311→            className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
+   312→            aria-label="Report summary"
+   313→          >
+   314→            <StatCard
+   315→              label="Total Analyses"
+   316→              value={data.totalAnalyses}
+   317→              icon={Activity}
+   318→              accent="cyan"
+   319→              sub="All fishermen"
+   320→            />
+   321→            <StatCard
+   322→              label="Distinct Species"
+   323→              value={data.speciesDistribution.length}
+   324→              icon={Fish}
+   325→              accent="green"
+   326→              sub="VLM-classified"
+   327→            />
+   328→            <StatCard
+   329→              label="Total Alerts"
+   330→              value={totalAlerts}
+   331→              icon={ShieldAlert}
+   332→              accent="amber"
+   333→              sub={`${unreadAlerts} unread`}
+   334→            />
+   335→            <StatCard
+   336→              label="Curated Spots"
+   337→              value={data.fishingSpots.length}
+   338→              icon={MapPin}
+   339→              accent="purple"
+   340→              sub="OpenStreetMap"
+   341→            />
+   342→          </section>
+   343→
+   344→          {/* ── Charts row 1: species pie + confidence bar ─────────────────── */}
+   345→          <section className="mt-6 grid gap-4 lg:grid-cols-2">
+   346→            {/* Species distribution — PieChart */}
+   347→            <Card className="glass-card animate-fade-up">
+   348→              <CardHeader>
+   349→                <CardTitle className="flex items-center gap-2 text-base">
+   350→                  <Fish className="size-4 text-cyan-400" />
+   351→                  Species Distribution
+   352→                </CardTitle>
+   353→                <CardDescription>
+   354→                  Observations grouped by classified species.
+   355→                </CardDescription>
+   356→              </CardHeader>
+   357→              <CardContent>
+   358→                {data.speciesDistribution.length === 0 ? (
+   359→                  <EmptyState
+   360→                    title="No species data yet"
+   361→                    description="Fish analyses will appear here once recorded."
+   362→                    icon={Fish}
+   363→                    className="py-8"
+   364→                  />
+   365→                ) : (
+   366→                  <div className="grid gap-4 lg:grid-cols-2">
+   367→                    <ChartContainer
+   368→                      config={SPECIES_CHART_CONFIG}
+   369→                      className="mx-auto aspect-square max-h-[260px]"
+   370→                    >
+   371→                      <PieChart>
+   372→                        <Pie
+   373→                          data={speciesChartData}
+   374→                          dataKey="value"
+   375→                          nameKey="name"
+   376→                          innerRadius={50}
+   377→                          outerRadius={90}
+   378→                          paddingAngle={2}
+   379→                        >
+   380→                          {speciesChartData.map((entry, idx) => (
+   381→                            <Cell key={idx} fill={entry.fill} />
+   382→                          ))}
+   383→                        </Pie>
+   384→                        <ChartTooltip
+   385→                          content={<ChartTooltipContent nameKey="name" />}
+   386→                        />
+   387→                      </PieChart>
+   388→                    </ChartContainer>
+   389→                    <div className="scroll-ocean max-h-[260px] overflow-y-auto">
+   390→                      <Table>
+   391→                        <TableHeader>
+   392→                          <TableRow>
+   393→                            <TableHead>Species</TableHead>
+   394→                            <TableHead className="text-right">N</TableHead>
+   395→                            <TableHead className="text-right">Conf.</TableHead>
+   396→                          </TableRow>
+   397→                        </TableHeader>
+   398→                        <TableBody>
+   399→                          {data.speciesDistribution.map((s, idx) => (
+   400→                            <TableRow key={s.species}>
+   401→                              <TableCell className="py-1.5 font-medium">
+   402→                                <span className="flex items-center gap-2">
+   403→                                  <span
+   404→                                    className="inline-block size-2.5 rounded-full"
+   405→                                    style={{
+   406→                                      backgroundColor:
+   407→                                        SPECIES_COLORS[
+   408→                                          idx % SPECIES_COLORS.length
+   409→                                        ],
+   410→                                    }}
+   411→                                    aria-hidden
+   412→                                  />
+   413→                                  {s.species}
+   414→                                </span>
+   415→                              </TableCell>
+   416→                              <TableCell className="py-1.5 text-right tabular-nums">
+   417→                                {s.count}
+   418→                              </TableCell>
+   419→                              <TableCell className="py-1.5 text-right tabular-nums text-muted-foreground">
+   420→                                {pct(s.avgConfidence)}
+   421→                              </TableCell>
+   422→                            </TableRow>
+   423→                          ))}
+   424→                        </TableBody>
+   425→                      </Table>
+   426→                    </div>
+   427→                  </div>
+   428→                )}
+   429→              </CardContent>
+   430→            </Card>
+   431→
+   432→            {/* Confidence buckets — BarChart */}
+   433→            <Card className="glass-card animate-fade-up">
+   434→              <CardHeader>
+   435→                <CardTitle className="flex items-center gap-2 text-base">
+   436→                  <Activity className="size-4 text-emerald-400" />
+   437→                  Confidence Distribution
+   438→                </CardTitle>
+   439→                <CardDescription>
+   440→                  VLM confidence buckets across all analyses.
+   441→                </CardDescription>
+   442→              </CardHeader>
+   443→              <CardContent>
+   444→                <ChartContainer
+   445→                  config={CONFIDENCE_CHART_CONFIG}
+   446→                  className="aspect-[4/3] max-h-[300px] w-full"
+   447→                >
+   448→                  <BarChart
+   449→                    data={data.confidenceBuckets}
+   450→                    margin={{ top: 10, right: 10, bottom: 0, left: -10 }}
+   451→                  >
+   452→                    <CartesianGrid
+   453→                      vertical={false}
+   454→                      strokeDasharray="3 3"
+   455→                      stroke="rgba(255,255,255,0.08)"
+   456→                    />
+   457→                    <XAxis
+   458→                      dataKey="bucket"
+   459→                      tickLine={false}
+   460→                      axisLine={false}
+   461→                      tickMargin={8}
+   462→                      fontSize={11}
+   463→                    />
+   464→                    <YAxis
+   465→                      allowDecimals={false}
+   466→                      fontSize={11}
+   467→                      tickLine={false}
+   468→                      axisLine={false}
+   469→                    />
+   470→                    <ChartTooltip
+   471→                      cursor={false}
+   472→                      content={<ChartTooltipContent />}
+   473→                    />
+   474→                    <Bar
+   475→                      dataKey="count"
+   476→                      fill="var(--color-count)"
+   477→                      radius={[6, 6, 0, 0]}
+   478→                    />
+   479→                  </BarChart>
+   480→                </ChartContainer>
+   481→              </CardContent>
+   482→            </Card>
+   483→          </section>
+   484→
+   485→          {/* ── Monthly trend — AreaChart ─────────────────────────────────── */}
+   486→          <section className="mt-6">
+   487→            <Card className="glass-card animate-fade-up">
+   488→              <CardHeader>
+   489→                <CardTitle className="flex items-center gap-2 text-base">
+   490→                  <Activity className="size-4 text-cyan-400" />
+   491→                  Monthly Analysis Trend
+   492→                </CardTitle>
+   493→                <CardDescription>
+   494→                  Fish analyses per month over the last 6 months.
+   495→                </CardDescription>
+   496→              </CardHeader>
+   497→              <CardContent>
+   498→                <ChartContainer
+   499→                  config={TREND_CHART_CONFIG}
+   500→                  className="aspect-[5/2] max-h-[280px] w-full"
+   501→                >
+   502→                  <AreaChart
+   503→                    data={data.monthlyTrend}
+   504→                    margin={{ top: 10, right: 10, bottom: 0, left: -10 }}
+   505→                  >
+   506→                    <defs>
+   507→                      <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+   508→                        <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.55} />
+   509→                        <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.05} />
+   510→                      </linearGradient>
+   511→                    </defs>
+   512→                    <CartesianGrid
+   513→                      vertical={false}
+   514→                      strokeDasharray="3 3"
+   515→                      stroke="rgba(255,255,255,0.08)"
+   516→                    />
+   517→                    <XAxis
+   518→                      dataKey="month"
+   519→                      tickLine={false}
+   520→                      axisLine={false}
+   521→                      tickMargin={8}
+   522→                      fontSize={11}
+   523→                    />
+   524→                    <YAxis
+   525→                      allowDecimals={false}
+   526→                      fontSize={11}
+   527→                      tickLine={false}
+   528→                      axisLine={false}
+   529→                    />
+   530→                    <ChartTooltip content={<ChartTooltipContent />} />
+   531→                    <Area
+   532→                      type="monotone"
+   533→                      dataKey="analyses"
+   534→                      stroke="var(--color-analyses)"
+   535→                      strokeWidth={2.5}
+   536→                      fill="url(#trendGrad)"
+   537→                    />
+   538→                  </AreaChart>
+   539→                </ChartContainer>
+   540→              </CardContent>
+   541→            </Card>
+   542→          </section>
+   543→
+   544→          {/* ── Alert summary + Fishing spots ─────────────────────────────── */}
+   545→          <section className="mt-6 grid gap-4 lg:grid-cols-2">
+   546→            {/* Alert severity summary */}
+   547→            <Card className="glass-card animate-fade-up">
+   548→              <CardHeader>
+   549→                <CardTitle className="flex items-center gap-2 text-base">
+   550→                  <ShieldAlert className="size-4 text-amber-400" />
+   551→                  Alert Severity Summary
+   552→                </CardTitle>
+   553→                <CardDescription>
+   554→                  Aggregate counts across all stored WeatherAlerts.
+   555→                </CardDescription>
+   556→              </CardHeader>
+   557→              <CardContent>
+   558→                {data.alertSummary.length === 0 ? (
+   559→                  <EmptyState
+   560→                    title="No alerts recorded"
+   561→                    description="Alerts appear once the alert engine has run."
+   562→                    icon={ShieldAlert}
+   563→                    className="py-8"
+   564→                  />
+   565→                ) : (
+   566→                  <ul className="space-y-2">
+   567→                    {data.alertSummary.map((a) => {
+   568→                      const style =
+   569→                        SEVERITY_STYLES[a.severity] ??
+   570→                        ({
+   571→                          chip:
+   572→                            "border-slate-500/40 bg-slate-500/15 text-slate-300",
+   573→                          label: a.severity,
+   574→                          icon: Info,
+   575→                        } as const);
+   576→                      const Icon = style.icon;
+   577→                      return (
+   578→                        <li
+   579→                          key={a.severity}
+   580→                          className="glass-card flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
+   581→                        >
+   582→                          <div className="flex items-center gap-2.5">
+   583→                            <Icon className="size-4 text-muted-foreground" />
+   584→                            <span className="text-sm font-medium">
+   585→                              {style.label}
+   586→                            </span>
+   587→                            <Badge
+   588→                              variant="outline"
+   589→                              className={`text-[10px] ${style.chip}`}
+   590→                            >
+   591→                              {a.severity}
+   592→                            </Badge>
+   593→                          </div>
+   594→                          <div className="flex items-baseline gap-3 text-right">
+   595→                            <span className="text-lg font-bold tabular-nums">
+   596→                              {a.count}
+   597→                            </span>
+   598→                            <span className="text-[11px] text-muted-foreground">
+   599→                              {a.unread} unread
+   600→                            </span>
+   601→                          </div>
+   602→                        </li>
+   603→                      );
+   604→                    })}
+   605→                  </ul>
+   606→                )}
+   607→              </CardContent>
+   608→            </Card>
+   609→
+   610→            {/* Fishing spots table */}
+   611→            <Card className="glass-card animate-fade-up">
+   612→              <CardHeader>
+   613→                <CardTitle className="flex items-center gap-2 text-base">
+   614→                  <MapPin className="size-4 text-purple-400" />
+   615→                  Curated Fishing Spots
+   616→                </CardTitle>
+   617→                <CardDescription>
+   618→                  Harbour &amp; offshore spots from the project seed.
+   619→                </CardDescription>
+   620→              </CardHeader>
+   621→              <CardContent>
+   622→                {data.fishingSpots.length === 0 ? (
+   623→                  <EmptyState
+   624→                    title="No spots curated"
+   625→                    description="Run the seed to populate the curated harbour list."
+   626→                    icon={MapPin}
+   627→                    className="py-8"
+   628→                  />
+   629→                ) : (
+   630→                  <div className="scroll-ocean max-h-80 overflow-y-auto">
+   631→                    <Table>
+   632→                      <TableHeader>
+   633→                        <TableRow>
+   634→                          <TableHead>Name</TableHead>
+   635→                          <TableHead>Region</TableHead>
+   636→                          <TableHead>Depth</TableHead>
+   637→                          <TableHead>Bottom</TableHead>
+   638→                        </TableRow>
+   639→                      </TableHeader>
+   640→                      <TableBody>
+   641→                        {data.fishingSpots.map((s) => (
+   642→                          <TableRow key={s.id}>
+   643→                            <TableCell className="font-medium">
+   644→                              {s.name}
+   645→                            </TableCell>
+   646→                            <TableCell className="text-xs text-muted-foreground">
+   647→                              {s.region || "—"}
+   648→                            </TableCell>
+   649→                            <TableCell className="text-xs tabular-nums text-muted-foreground">
+   650→                              {s.depthM != null ? `${s.depthM} m` : "—"}
+   651→                            </TableCell>
+   652→                            <TableCell>
+   653→                              {s.bottomType ? (
+   654→                                <Badge
+   655→                                  variant="outline"
+   656→                                  className="text-[10px]"
+   657→                                >
+   658→                                  {s.bottomType}
+   659→                                </Badge>
+   660→                              ) : (
+   661→                                <Unavailable />
+   662→                              )}
+   663→                            </TableCell>
+   664→                          </TableRow>
+   665→                        ))}
+   666→                      </TableBody>
+   667→                    </Table>
+   668→                  </div>
+   669→                )}
+   670→              </CardContent>
+   671→            </Card>
+   672→          </section>
+   673→
+   674→          {/* ── Recent sea conditions mini-strip ─────────────────────────── */}
+   675→          <section className="mt-6">
+   676→            <Card className="glass-card animate-fade-up">
+   677→              <CardHeader>
+   678→                <CardTitle className="flex items-center gap-2 text-base">
+   679→                  <Waves className="size-4 text-sky-400" />
+   680→                  Recent Sea-Condition Snapshots
+   681→                </CardTitle>
+   682→                <CardDescription>
+   683→                  Last 10 stored environmental records (no personal info).
+   684→                </CardDescription>
+   685→              </CardHeader>
+   686→              <CardContent>
+   687→                {data.recentSeaConditions.length === 0 ? (
+   688→                  <EmptyState
+   689→                    title="No sea-condition records"
+   690→                    description="Records accumulate as fishermen query live conditions."
+   691→                    icon={Database}
+   692→                    className="py-6"
+   693→                  />
+   694→                ) : (
+   695→                  <div className="scroll-ocean max-h-72 overflow-y-auto">
+   696→                    <Table>
+   697→                      <TableHeader>
+   698→                        <TableRow>
+   699→                          <TableHead>Location</TableHead>
+   700→                          <TableHead>Coords</TableHead>
+   701→                          <TableHead>Source</TableHead>
+   702→                          <TableHead>Mode</TableHead>
+   703→                          <TableHead>Recorded</TableHead>
+   704→                        </TableRow>
+   705→                      </TableHeader>
+   706→                      <TableBody>
+   707→                        {data.recentSeaConditions.map((r) => (
+   708→                          <TableRow key={r.id}>
+   709→                            <TableCell className="font-medium">
+   710→                              {r.locationLabel || "—"}
+   711→                            </TableCell>
+   712→                            <TableCell className="text-xs tabular-nums text-muted-foreground">
+   713→                              {r.latitude.toFixed(3)},{" "}
+   714→                              {r.longitude.toFixed(3)}
+   715→                            </TableCell>
+   716→                            <TableCell>
+   717→                              <Badge variant="outline" className="text-[10px]">
+   718→                                {r.source}
+   719→                              </Badge>
+   720→                            </TableCell>
+   721→                            <TableCell>
+   722→                              {r.isDemo ? (
+   723→                                <Badge
+   724→                                  variant="outline"
+   725→                                  className="border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-300"
+   726→                                >
+   727→                                  Demo
+   728→                                </Badge>
+   729→                              ) : (
+   730→                                <Badge
+   731→                                  variant="outline"
+   732→                                  className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-300"
+   733→                                >
+   734→                                  Live
+   735→                                </Badge>
+   736→                              )}
+   737→                            </TableCell>
+   738→                            <TableCell className="text-xs tabular-nums text-muted-foreground">
+   739→                              {new Date(r.recordedAt).toLocaleString()}
+   740→                            </TableCell>
+   741→                          </TableRow>
+   742→                        ))}
+   743→                      </TableBody>
+   744→                    </Table>
+   745→                  </div>
+   746→                )}
+   747→              </CardContent>
+   748→            </Card>
+   749→          </section>
+   750→        </>
+   751→      ) : null}
+   752→    </div>
+   753→  );
+   754→}
+   755→
+   756→export default ResearcherFishingDataView;
+   757→

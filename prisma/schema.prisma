@@ -32,6 +32,7 @@ model User {
   notifications  Notification[]
   passwordResets PasswordReset[]
   apiLogs        ApiLog[]
+  researchReports ResearchReport[]
 }
 
 model UserProfile {
@@ -43,6 +44,15 @@ model UserProfile {
   vesselName String?
   licenseNumber String?
   avatarUrl String?
+  // ── Phase 2: fisherman preferences ────────────────────────────────────
+  preferredLocationName String?
+  preferredLat          Float?
+  preferredLng         Float?
+  language              String  @default("en")
+  temperatureUnit      String  @default("celsius") // celsius | fahrenheit
+  windUnit             String  @default("kmh")      // kmh | ms | knots
+  notifAlerts          Boolean @default(true)
+  notifSummary         Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -101,10 +111,22 @@ model WeatherAlert {
   endTime     DateTime?
   source      String   @default("Fisherman Module Alert Engine")
   isRead      Boolean  @default(false)
+  // ── Phase 2: alert lifecycle ──────────────────────────────────────────
+  // ACTIVE | ACKNOWLEDGED | EXPIRED | RESOLVED
+  status         String    @default("ACTIVE")
+  metric         String?   // e.g. windSpeedKmh
+  actualValue    String?   // the reading that triggered it
+  thresholdValue String?   // the threshold it crossed
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+  resolvedAt     DateTime?
   createdAt   DateTime @default(now())
+
+  notifications Notification[]
 
   @@index([userId])
   @@index([severity])
+  @@index([status])
 }
 
 model AlertThreshold {
@@ -183,10 +205,16 @@ model Notification {
   title     String
   message   String
   type      String   @default("info") // info | success | warning | alert
+  // ── Phase 2: richer notifications ─────────────────────────────────────
+  severity  String?  // LOW | MODERATE | HIGH | CRITICAL (when alert-related)
+  category  String   @default("general") // general | alert | system | analysis
+  alertId   String?  // related WeatherAlert, if any
+  alert     WeatherAlert? @relation(fields: [alertId], references: [id], onDelete: SetNull)
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([alertId])
 }
 
 model ApiLog {
@@ -211,4 +239,21 @@ model SystemSetting {
   value     String
   category  String   @default("general") // general | api | alert | branding
   updatedAt DateTime @updatedAt
+}
+
+// ─── Phase 2: Research reports (persisted, user-owned) ──────────────────────
+model ResearchReport {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  datasetKey  String   // references a dataset registry key (e.g. "sea-conditions", "fish-analyses", "fishing-spots", "alerts")
+  filtersJson String?  // JSON string of applied filters
+  summaryJson String?  // JSON string of summary statistics
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([datasetKey])
 }

@@ -581,3 +581,316 @@ Stage Summary:
 - 4 working fisherman modules (Sea Conditions, Safety Alerts, AI Fish Analysis, Location & Navigation); Catch Logging + SOS wired as disabled "Coming Soon".
 - Real integrations: Open-Meteo weather/marine, z-ai-web-dev-sdk VLM, Leaflet/OpenStreetMap. No fake live data; offline mode clearly labeled.
 - Demo accounts: admin@fisherman.dev / Admin@123, researcher@fisherman.dev / Research@123, fisher@fisherman.dev / Fisher@123.
+
+---
+
+## Task F6 — Admin API Monitoring View
+
+- **Task ID**: F6
+- **Agent**: GLM (fullstack-dev, view-only build)
+- **Task**: Build ONE new admin client view — `src/components/admin/api-monitoring-view.tsx` — that surfaces external-service health derived from the `api_logs` table over the last 24h. Must not touch any working module, `module-router.tsx`, `modules/index.tsx`, or existing views.
+
+### Work Log
+
+1. Read `worklog.md` and project conventions: SPA at `/`, client-side view routing via Zustand, dark ocean blue theme, `.glass-card` / `.scroll-ocean` classes, `api.*` client layer, shadcn/ui, lucide-react, recharts, sonner toasts.
+2. Read `src/lib/api.ts` to confirm the contracts:
+   - `api.getApiHealth()` → `{ overall, services: [{ service, health, total, errors, lastStatus, lastAt, p95Ms }] }`
+   - `api.getApiLogs()` → `{ logs: [{ id, service, endpoint, method, status, durationMs, message, userEmail, createdAt }] }`
+3. Read both backend route handlers (`src/app/api/admin/api-health/route.ts`, `src/app/api/admin/api-logs/route.ts`) to confirm exact wire shapes (both `requireRole("ADMIN")`).
+4. Studied existing admin view patterns (`admin-dashboard-view.tsx` for layout / table / severity chips) and the researcher chart usage (`researcher-fishing-data-view.tsx` for `ChartContainer` + `ChartTooltip` + `ChartConfig` patterns).
+5. Created `src/components/admin/api-monitoring-view.tsx`:
+   - Default + named `ApiMonitoringView` export.
+   - Layout `mx-auto max-w-7xl px-4 py-6 sm:px-6`.
+   - Header "API Monitoring" + subtitle "Health of external service integrations over the last 24h" + live "Updated Xm ago · auto-refresh on" indicator + Refresh button.
+   - Overall health banner: large `glass-card` with icon + text + color (CheckCircle2/amber AlertTriangle/rose ServerCrash). `role="status" aria-live="polite"`, plus `<span className="sr-only">` so screen readers hear "Healthy/Degraded/Unavailable".
+   - StatCards row: total services, healthy, degraded, unavailable (cyan / green / amber / red accents).
+   - Services table (`glass-card`, shadcn Table) with service, health badge (emerald/amber/rose with icon + text label), total calls, errors, last HTTP status badge (colored by 2xx/4xx/5xx with `title` describing class), lastAt (relative), p95Ms. Sorted by health severity (unavailable → degraded → healthy), then error rate desc, then alphabetical.
+   - Recharts `BarChart` (per-service total vs. errors, side-by-side) using `ChartContainer` + `ChartTooltip` + `ChartConfig` exactly like the researcher view, cyan (#22d3ee) + rose (#fb7185).
+   - "Recent API Calls" section: `api.getApiLogs()` → newest 25, `scroll-ocean max-h-96 overflow-y-auto overflow-x-auto`, columns: service, endpoint (truncated), method badge, status badge (colored by 2xx/4xx/5xx with `title`), durationMs (ms/s formatting), userEmail or "—", relative time.
+   - Auto-refresh: 60s `window.setInterval` calls the latest loader (kept in a ref so the effect does not re-subscribe on every render); clears on unmount.
+   - Note aside (cyan): "API keys and secrets are managed via server environment variables and are never shown here."
+   - Loading / error guards via shared `LoadingState` + `ErrorState` with retry. `EmptyState` for zero-row tables.
+6. Verified: `bun run lint` clean (no errors / warnings). Dev log shows `✓ Compiled in 244ms` and no compile errors after the file was added.
+
+### Constraints honored
+
+- Single new file only — did not edit `modules/index.tsx`, `module-router.tsx`, any existing view, or any backend route.
+- Real data only via `api.getApiHealth()` + `api.getApiLogs()`. No fabricated metrics.
+- Health conveyed via icon + text + color (never color alone); sr-only label + icon on banner and table chips.
+- Admin-only by virtue of the backend's `requireRole("ADMIN")` already in place on both routes.
+
+### Stage Summary
+
+One new admin client view delivered at `src/components/admin/api-monitoring-view.tsx`, exporting both `ApiMonitoringView` (named) and a default export. It is intentionally not wired into `module-router.tsx` (constraint); the AppShell / module router can import it directly when the admin nav is extended. Lint clean; dev server compiles without errors.
+
+---
+
+## Task ID: F5
+
+- **Agent**: researcher-views-agent (Z.ai Code)
+- **Task**: Build four new researcher client views — Data Explorer, Dataset
+  Details, GIS map, and Research Reports — wired to the already-implemented
+  `/api/researcher/{datasets,datasets/:key,gis,reports}` endpoints. Do NOT
+  touch the working fisherman/admin modules or the existing 3 researcher
+  views; do NOT modify `modules/index.tsx` or `module-router.tsx` (the
+  orchestrator wires the new exports in afterward).
+
+### Work Log
+
+- Read `worklog.md`, `src/lib/api.ts`, `src/lib/store.ts`,
+  `src/lib/datasets.ts`, the existing API routes
+  (`/api/researcher/datasets`, `/api/researcher/datasets/[id]`,
+  `/api/researcher/gis`, `/api/researcher/reports`, `/api/researcher/reports/[id]`),
+  the shared UI (`common/states.tsx`, `common/stat-card.tsx`,
+  `ui/{dialog,alert-dialog,table,select,switch,pagination,chart,card,button,badge,input}.tsx`),
+  the existing researcher views for pattern reference
+  (`researcher-dashboard-view.tsx`), the Leaflet map component at
+  `src/components/location/leaflet-map.tsx`, and the existing
+  `location-navigation-view.tsx` (which lazy-loads the map) — to confirm
+  conventions before writing any new code.
+- Created **4 new client views** (each `'use client'`, layout
+  `mx-auto max-w-{7xl|5xl} px-4 py-6 sm:px-6`, glass-card, animate-fade-up,
+  LoadingState/ErrorState/EmptyState per panel, scroll-ocean where needed,
+  both default + named export, no PII rendered, real DB data only):
+  1. `src/components/researcher/data-explorer-view.tsx` —
+     `ResearcherDataExplorerView`. Header "Research Data Explorer" + subtitle
+     "Real datasets backed by stored observations — no PII." Filter bar:
+     search by name (Input) + dataType Select (All/Oceanographic/Fisheries,
+     derived from the actual datasets returned) + status Select
+     (All/Active/Archived). Dataset cards grid (sm:2 / lg:3 cols): per-dataset
+     icon (Waves/Layers/MapIcon/ShieldAlert), accent (cyan/green/amber/red),
+     dataType badge, status badge, name, description, big-number record
+     count panel, source / coverage (N/S/E/W bounds) / lastUpdated dl, first
+     4 field-label chips, "Explore dataset" button that calls
+     `setSelectedDatasetKey(key)` + `setView("researcher.dataset-details")`.
+     EmptyState when registry returns nothing (shouldn't happen but handled).
+     LoadingState via 4 CardSkeletons on initial fetch; ErrorState on fetch
+     failure.
+  2. `src/components/researcher/dataset-details-view.tsx` —
+     `ResearcherDatasetDetailsView`. Reads `selectedDatasetKey` from the
+     Zustand store; if null shows EmptyState + "Back to explorer" button.
+     Loads via `api.getResearcherDataset(key, {page,pageSize:10,search})`.
+     Header card: name, dataType/status badges, description, source + N/S/E/W
+     coverage. 3 StatCards (Total records / Matching search / Coverage).
+     Chart suited to dataset (built from CURRENT page's records, with note
+     "Aggregated from the records on the current page only"): for
+     fish-analyses → BarChart of confidence buckets (<0.5/0.5–0.7/0.7–0.85
+     / >0.85); for sea-conditions → BarChart of count by `source`
+     (open-meteo vs offline); for alerts → BarChart of count by `severity`;
+     for fishing-spots → BarChart of count by `bottomType`. EmptyState
+     inside the chart card when no records. Paginated shadcn Table with
+     per-dataset column descriptors (sea-conditions / fish-analyses /
+     fishing-spots / alerts). Debounced (~300ms) search Input that re-fetches
+     with `search` param. Prev/Next buttons + numeric page Input clamped to
+     [1, totalPages]. "Save as report" button opens a Dialog with the
+     dataset-name-prefilled title; on confirm calls
+     `api.createResearcherReport({title, description, datasetKey,
+     filters:{search,page,pageSize}, summary:{recordCount,total,coverage}})`
+     → toast + `setView("researcher.reports")`. All hooks (useState,
+     useEffect, useCallback, useMemo) are declared BEFORE the early-return
+     `if (!selectedKey) return EmptyState`, to satisfy
+     react-hooks/rules-of-hooks. Per-row key falls back to `row-${page}-${idx}`
+     when record lacks an `id`.
+  3. `src/components/researcher/gis-view.tsx` — `ResearcherGisView`. Layout
+     `mx-auto max-w-7xl`. lg:2-col grid `[16rem_1fr]` — controls aside on
+     the left, sticky h-[600px] map on the right. Filters: per-source Switch
+     toggles (sea-conditions / fishing-spots / alerts) with colour dot +
+     icon + count; default all three on. Re-fetches `api.getResearcherGis
+     (selectedSources)` whenever toggles change. 4 StatCards (Total points,
+     Sea conditions, Fishing spots, Weather alerts). Reuses the existing
+     Leaflet map via `dynamic(() => import("@/components/location/leaflet-map")
+     .then(m=>m.LeafletMap), { ssr:false })` (same convention as
+     location-navigation-view.tsx). Markers coloured per dataset
+     (sea-conditions=#22d3ee cyan, fishing-spots=#f59e0b amber,
+     alerts=#fb7185 red) with bound HTML-escaped popups including `detail`.
+     Map auto-centres on the mean of the points (or default world-view
+     zoom 2 when empty). Legend card (color→dataset). Purple "data
+     aggregated for research purposes — individual fisherman identities
+     are not exposed" disclaimer aside. Map region has
+     `aria-label="Researcher geographic observations map"`. EmptyState when
+     no points for the selected sources.
+  4. `src/components/researcher/reports-view.tsx` —
+     `ResearcherReportsView`. Layout `mx-auto max-w-5xl`. Header "Research
+     Reports" + subtitle "Saved snapshots of your research queries." Lists
+     `api.listResearcherReports()` on mount, sorted by `updatedAt` desc.
+     Each report is a glass-card: FileText icon tile, datasetKey badge
+     (colour per dataset — cyan/emerald/amber/rose), title, created + (when
+     different) updated timestamp, description (or "No description
+     provided." fallback), "View JSON" Button → Dialog pretty-printing
+     `filtersJson` + `summaryJson` in `<pre><code>` blocks with scroll-ocean
+     + max-h-60, and a per-row AlertDialog "Delete report?" confirmation
+     (Cancel / Delete) calling `api.deleteResearcherReport(id)` → toast +
+     filter-removed-from-list. Loading state on the delete button while
+     awaiting response. EmptyState when no reports ("No saved reports yet.
+     Create one from a dataset's detail page by clicking 'Save as
+     report'.") with FileText icon.
+- Did NOT edit `src/components/modules/index.tsx` or
+  `src/components/module-router.tsx` — the orchestrator wires
+  `ResearcherDataExplorerView`, `ResearcherDatasetDetailsView`,
+  `ResearcherGisView`, `ResearcherReportsView` into the module registry +
+  ViewRenderer switch afterward (the ViewIds `researcher.data-explorer`,
+  `researcher.dataset-details`, `researcher.gis`, `researcher.reports` are
+  already declared in `src/lib/store.ts`).
+- Reused the existing `LeafletMap` at `@/components/location/leaflet-map` —
+  did NOT create a new map component.
+- Ran `bun run lint` → **0 errors / 0 warnings** for all 4 files (initial
+  run flagged 2 errors + 1 warning in dataset-details-view.tsx because
+  two `useMemo` hooks were called AFTER an early `if (!selectedKey) return`;
+  fixed by moving both `useMemo`s + the prefill `useEffect` ABOVE the early
+  return so hook order is stable across renders. Also removed an unused
+  `eslint-disable-line react-hooks/exhaustive-deps` directive).
+- Ran `bunx tsc --noEmit --pretty false` → 0 TypeScript errors in any of the
+  4 new files. (The only TS errors reported are pre-existing in other
+  agents' files: `examples/websocket/*`, `skills/*`,
+  `admin-dashboard-view.tsx`, `admin/api-monitoring-view.tsx`,
+  `profile/profile-view.tsx`, and `lib/weather.ts:209` — none of which I
+  touched.)
+- Checked `/home/z/my-project/dev.log` after each write — the dev server
+  hot-reloaded cleanly each time; the final entries show
+  `✓ Compiled in 244ms / 214ms / 222ms / 211ms / 222ms / 189ms / 181ms`
+  with no compile errors. Two transient "Fast Refresh had to perform a
+  full reload due to a runtime error" warnings appeared mid-edit (when the
+  lint-failing dataset-details-view was first saved) but the subsequent
+  re-compiles after the fix succeeded cleanly.
+- Verified the `/api/researcher/datasets`, `/api/researcher/datasets/:key`,
+  `/api/researcher/gis`, and `/api/researcher/reports` API contracts in
+  `src/lib/api.ts` match what each view consumes (typed via
+  `as unknown as <Type>` casts where needed because the api.ts return types
+  use `unknown[]` for arrays).
+- Verified all 4 new views use real DB aggregate data only (no hardcoded
+  numbers anywhere), show EmptyState when a dataset has 0 records with a
+  useful message explaining what data is required (e.g. "No sea-condition
+  observations yet. Fishermen must log sea conditions for data to
+  appear."), and render no fisherman PII (the GIS endpoint strips userId
+  from sea-condition points; the fish-analyses dataset preview omits owner
+  identity entirely — only species / confidence / size / weight / createdAt
+  are shown).
+
+### Stage Summary
+
+All 4 new researcher client views created and wired to the existing
+`/api/researcher/*` endpoints. No existing module or route was modified.
+Data integrity is preserved: only the 4 real datasets (sea-conditions,
+fish-analyses, fishing-spots, alerts) are exposed; charts are built from
+the CURRENT page's records (with a clear "this page" label); empty
+datasets show actionable EmptyState explanations; no fisherman PII is
+rendered anywhere. The shared Leaflet map is reused (lazy-loaded with
+`next/dynamic({ssr:false})` per the established convention). All 4 files
+export both a default and a named function so the orchestrator can wire
+them via either pattern. Lint passes with 0 errors/warnings for the new
+files; the dev server compiles cleanly on every change. Sticky footer is
+handled by the existing AppShell. Detailed work record above.
+
+
+---
+
+## Task ID: F4
+
+- **Agent**: profile-notifications-agent (Z.ai Code)
+- **Task**: Build two NEW client views — `ProfileView` (profile + preferences) and `NotificationsView` (full notification center) — using existing API contracts. Fix the dead "Profile & Settings" link. Do NOT touch any working module or the module-router registry.
+
+### Work Log
+
+- Read `worklog.md` end-to-end to learn conventions (single SPA at `/`, Zustand view routing, dark ocean theme, glass-card / scroll-ocean / ocean-bg, `api.*` service layer with `ApiError`, shared `LoadingState`/`ErrorState`/`EmptyState`/`StatCard`, `RoleBadge`, shadcn/ui, sonner toasts).
+- Read `src/lib/api.ts` to confirm the exact shapes for `getProfile`/`updateProfile`/`listNotifications`/`markNotificationRead`/`deleteNotification`/`readAllNotifications` (all already implemented backend-side; my work is purely client UI).
+- Read `src/app/api/profile/route.ts`, `src/app/api/notifications/route.ts`, `src/app/api/notifications/[id]/route.ts`, `src/app/api/notifications/[id]/read/route.ts`, `src/app/api/notifications/read-all/route.ts` to confirm what fields the server actually returns.
+- Read `prisma/schema.prisma` for `User`, `UserProfile`, `Notification` models (severity is nullable, category default `general`, alertId nullable + FK to `WeatherAlert`).
+- Read `src/components/safety-alerts/safety-alerts-view.tsx` (same author agent's prior file) to mirror styling idioms: severity color stripe, type→icon mapping, time-ago helper, `aria-busy`, optimistic UI, auto-refresh interval, glass-card rows, `<aside role="note">` disclaimer.
+- Read `src/components/layout/header.tsx` and `sidebar.tsx` to confirm where the dead link is wired (`onClick={() => setView("fisherman.profile")}` in the header dropdown, plus a "Notifications" sidebar entry) — both new views will be reachable once the orchestrator wires them into `modules/index.tsx` + `module-router.tsx`.
+- Read `src/components/ui/{tabs,select,alert-dialog,switch,label,input,separator,badge,avatar,card,button}.tsx` to learn exact prop signatures.
+
+#### Files created (ONLY these — no other file touched)
+
+1. **`src/components/profile/profile-view.tsx`** (default + named `ProfileView`)
+   - Layout: `mx-auto max-w-4xl px-4 py-6 sm:px-6 animate-fade-up`.
+   - Header: `Avatar` (initials fallback), name + email + `RoleBadge`.
+   - `Tabs` with two triggers: **Profile** and **Preferences** (icon + label, full-width on mobile).
+   - **Profile tab** (3 glass-cards):
+     - Read-only identity card — Email (`Mail` icon, helper note "managed by admin") + Role (`RoleBadge` + role description), separated by vertical `Separator`.
+     - Personal information card — `Field` for Full name (required, ≥2 chars), Phone (tel), Country, Vessel name, License number. Each Field has shadcn `Label` (with `htmlFor`) + lucide icon + `Input` (`aria-invalid` + `aria-describedby` + error `<p>` when touched & invalid).
+     - Preferred location card — `Field`s for Location name (full-width), Latitude, Longitude. A **"Use my current location"** `Button` calls `navigator.geolocation.getCurrentPosition` with high-accuracy + 10s timeout; on success fills lat/lng (4 decimals) + sets location name to "Current location" if blank; on failure maps `PERMISSION_DENIED`/`TIMEOUT`/`UNAVAILABLE` to friendly toast.error. Lat validated to [-90, 90], lng to [-180, 180], and if only one is set both error.
+     - Save button → `api.updateProfile({ name, phone, country, vesselName, licenseNumber, preferredLocationName, preferredLat, preferredLng })` (sends `null` when lat/lng cleared). Toast on success/error. Updates local state from server response.
+   - **Preferences tab** (2 glass-cards):
+     - Language & units card — 3-up `SelectField` grid: Language (en/es/fr/ta/hi/bn — each labeled with native script + English), Temperature (celsius/fahrenheit), Wind speed (kmh/ms/knots). Below: three secondary `Badge`s echoing current selections with mini icons (Thermometer/Wind/Globe) for instant visual confirmation.
+     - Notification preferences card — Two `SwitchRow`s with `Separator` between: `notifAlerts` ("Alert notifications", on by default) and `notifSummary` ("Daily summary digest", off by default). Each Switch has matching `Label htmlFor` + description.
+     - Save button → `api.updateProfile({ language, temperatureUnit, windUnit, notifAlerts, notifSummary })`. Toast on success.
+   - Sign out section at the bottom — small bordered panel with amber `AlertTriangle` + "Sign out of your account" + outline Button → `api.signOut()` then `useAppStore.getState().logoutClient()` then `useAppStore.setState({ view: "landing" })` and success toast (mirrors header's existing logout handler).
+   - Loading: `LoadingState` while initial `getProfile` is in flight. Error: `ErrorState` with retry button on failure (covers 401/session-expired case).
+   - Fully responsive: 1-col on mobile, 2-col on `sm:`+ grids for fields, 3-col for preferences. Accessible: every input has a `<Label htmlFor>` bound to its id, error messages are programmatic + visible, required field has `*` marker.
+
+2. **`src/components/notifications/notifications-view.tsx`** (default + named `NotificationsView`)
+   - Layout: `mx-auto max-w-4xl px-4 py-6 sm:px-6 animate-fade-up`.
+   - Header: `Bell` icon + "Notifications" title + subtitle. Action buttons (wrap on mobile): `Refresh` (outline, calls `load()`), `Mark all read` (primary, calls `api.readAllNotifications()`, shows updated count in toast), and a `Switch` toggle labeled "Unread only" inside a bordered label.
+   - StatCards row (2× on mobile, 4-up on `sm:`): Total (`Bell`, cyan), Unread (`BellRing`, amber, sub "All caught up" when 0), Alert-category count (`ShieldAlert`, red), Critical-severity count (`AlertTriangle`, red). All counts from real DB rows fetched via `api.listNotifications()` — no fake numbers.
+   - Category filter: shadcn `Select` (All/general/alert/system/analysis) with `Label htmlFor="notif-category-filter"` + `SelectTrigger id="notif-category-filter" aria-label="Filter by category"`.
+   - Notification list (`scroll-ocean max-h-[28rem]`): each item is a `<li>` wrapping a glass-card `<article>` with:
+     - Severity/type color stripe down the left edge — color is paired with an **icon + text label** so severity is never communicated by color alone (a11y hard requirement):
+       - `info` → `Info` icon, sky chip + dot, label "Info"
+       - `success` → `CheckCircle2` icon, emerald chip + dot, label "Success"
+       - `warning` → `AlertTriangle` icon, amber chip + dot, label "Warning"
+       - `alert` → `ShieldAlert` icon, rose chip + dot, label "Alert"
+     - Unread items get a `ring-1 ring-primary/30` + a "New" pill (dot + word "New").
+     - Title (truncate), message (muted), then meta row: type chip + category `Badge` (outline) + (when severity is set and not LOW) a severity chip, then relative time (`Clock` icon + `timeAgo`).
+     - If `alertId` is present, a **"View related alert"** button calls `useAppStore.setState({ view: "fisherman.safety-alerts" })` exactly as specified.
+     - Row actions: `Mark read` (outline, only when unread — optimistic mark + revert on failure) and `Delete` (ghost destructive — opens `AlertDialog` for confirmation, then optimistic delete + revert on failure).
+   - Empty state: `EmptyState` (icon `Inbox`) with a context-aware message depending on whether filters are active.
+   - Auto-refresh: `setInterval` every 60s calls `load()` (cleared on unmount).
+   - Loading: `LoadingState` while initial fetch in flight. Error: `ErrorState` with retry button.
+   - Accessibility: every button has `aria-label` (often with the notification title interpolated), every Switch + Select has an associated Label, the list `<ul>` has `role="list"`. Severity is communicated via **icon + text + color** — never color alone.
+   - Footer `<aside role="note">` with a `Sparkles` icon explaining the auto-refresh cadence.
+
+### Validation, errors, rollback
+
+- Client-side validation before PATCH: name ≥2 chars, lat in [-90, 90], lng in [-180, 180], lat/lng must be both-empty-or-both-set. `touched` state gating means errors only show after the user has blurred or pressed Save (less noisy UX).
+- Optimistic UI: mark-read + delete update local state immediately and revert on `ApiError` with a toast. Mark-all-read uses the bulk endpoint and shows the server-returned `updated` count in the success toast.
+- All `api.*` calls route through the shared service layer; no raw `fetch` to any URL.
+
+### Lint / type-check / runtime
+
+- `bun run lint` → **0 errors / 0 warnings** for my two files.
+- `bunx tsc --noEmit --pretty false` → **0 type errors** in `profile-view.tsx` or `notifications-view.tsx`. (Initial iteration surfaced two issues I fixed: `lucide-react` has no `Boat` icon — switched to `Anchor`; and `Record<string, unknown>` → `Profile` direct cast fails TS's structural check — routed through `unknown` (`as unknown as Profile`) at the three call sites where `api.getProfile`/`api.updateProfile` return `Record<string, unknown>` per the existing `api.ts` signature, which I deliberately did not modify since widening that type wasn't part of my task scope.)
+- `dev.log` shows clean hot-reload compiles (`✓ Compiled in 18x–24x ms`) on every save with no runtime errors. The pre-existing 30s `/api/notifications` poll from the header bell continues to return 200.
+
+### Notes for the orchestrator
+
+- I did NOT touch `src/components/modules/index.tsx` or `src/components/module-router.tsx` (per the task spec). To activate the new views, the orchestrator will need to:
+  1. Add to `modules/index.tsx`:
+     ```ts
+     export { ProfileView } from "@/components/profile/profile-view";
+     export { NotificationsView } from "@/components/notifications/notifications-view";
+     ```
+  2. Add to `module-router.tsx`'s `ViewRenderer` switch:
+     ```tsx
+     case "fisherman.profile": return <ProfileView />;
+     case "fisherman.notifications": return <NotificationsView />;
+     ```
+  3. Import both in `module-router.tsx`'s top import block.
+- Both views are "universal" — the backend (`/api/profile`, `/api/notifications`) is per-session-owned, so any role (admin/researcher/fisherman) can open them without an extra client guard. They are linked from the fisherman header dropdown + sidebar (already wired), and the "View related alert" button routes to the existing `fisherman.safety-alerts` view.
+
+### Stage Summary
+
+Both required files created. Real backend data only (no simulated notifications). Client-side validation mirrors backend rules (name ≥2 chars, lat/lng ranges). Severity accessibility satisfied via icon + text + color triple. Sticky footer handled by the existing AppShell (no new footer added). Lint clean, tsc clean, dev.log clean. Files are ready for the orchestrator to wire into the module registry. Detailed work record at `agent-ctx/F4-profile-notifications-agent.md`.
+
+---
+Task ID: PHASE-2 (orchestrator)
+Agent: orchestrator (main)
+Task: Phase 2 continuation — inspect existing codebase, then extend it systematically (alert lifecycle, notification center, fisherman profile, researcher data workspace, admin API monitoring, security hardening) WITHOUT breaking working features.
+
+Work Log:
+- INSPECTION: Read worklog + all lib files (auth, store, api, types, permissions, weather) + schema + module-router + sidebar + alert engine + dev server state. Confirmed auth, sea conditions, alerts engine, VLM fish analysis, location/nav, 7 admin views, 3 researcher views all REAL and working. Identified gaps: fisherman.settings was a DEAD LINK (router had no case), no alert lifecycle (only isRead), no notification center page, no researcher data-explorer/GIS/reports, no admin API health, last-admin protection incomplete.
+- FOUNDATION schema (additive, non-breaking): + WeatherAlert.{status,metric,actualValue,thresholdValue,acknowledgedAt,acknowledgedBy,resolvedAt}; + Notification.{severity,category,alertId(FK→WeatherAlert SetNull)}; + UserProfile.{preferredLocationName,preferredLat,preferredLng,language,temperatureUnit,windUnit,notifAlerts,notifSummary}; + new ResearchReport model. db:push applied.
+- BACKEND: src/lib/alerts.ts (resolveAlertStatus, touchExpiredAlerts, serializeAlert). Updated /api/alerts (list with status/severity filters + auto-expire), /api/alerts/run (populate metric/actualValue/thresholdValue/status=ACTIVE, link notifications to alert with severity), + /api/alerts/[id]/acknowledge, + /api/alerts/[id]/resolve (ownership-checked). + /api/profile (GET/PATCH own), + /api/notifications/[id] (DELETE), + /api/notifications/read-all. + src/lib/datasets.ts (real dataset registry: 4 datasets backed by actual Prisma queries, NO fabricated scientific data). + /api/researcher/datasets, /api/researcher/datasets/[id] (paginated preview), /api/researcher/gis (aggregate geo obs, no PII), /api/researcher/reports + /[id] (CRUD). + /api/admin/api-health (healthy/degraded/unavailable from api_logs). Strengthened /api/admin/users/[id] with last-active-admin guard.
+- api.ts: appended ~12 new methods (getProfile/updateProfile, acknowledgeAlert/resolveAlert, deleteNotification/readAllNotifications, listResearcherDatasets/getResearcherDataset/getResearcherGis, listResearcherReports/createResearcherReport/deleteResearcherReport, getApiHealth). Existing methods untouched.
+- WIRING: store.ts +ViewId (fisherman.notifications/profile/ai-history, researcher.data-explorer/dataset-details/gis/reports, admin.api-monitoring) + selectedDatasetKey + roleCanAccess updates. sidebar.tsx nav updated (preserved Coming Soon items). modules/index.tsx + module-router.tsx wired 7 new view exports. header profile link fixed (fisherman.settings → fisherman.profile, was a dead link).
+- SUBAGENTS (parallel, distinct folders, did NOT touch registry): F4 → ProfileView + NotificationsView; F5 → ResearcherDataExplorerView + ResearcherDatasetDetailsView + ResearcherGisView + ResearcherReportsView (reuse LeafletMap, real DB data, empty states); F6 → ApiMonitoringView.
+- ENHANCEMENTS (self): surgically added alert lifecycle UI to existing safety-alerts-view.tsx (status badge on cards, status+metric+actual/threshold in detail dialog, Acknowledge/Resolve buttons). Did NOT rewrite the working view.
+- BUGS FIXED: (1) api-monitoring-view crashed — `loadRef.current = load` referenced `load` before its useCallback declaration (temporal dead zone → ReferenceError); moved assignment after the declaration. (2) CRITICAL: Prisma client was STALE after schema push — the running Turbopack process held the pre-change client, so acknowledge/resolve 500'd with "Unknown argument status". Fixed by `bun run db:generate` + dev server restart. Documented in README.
+- CLEANUP: deleted stale Phase-1 test alert (created with temp thresholds 5/10/12) + its orphaned notification so demo state honestly reflects restored thresholds (25/40/60) and current demo conditions (wind 14 → no alert).
+- VERIFICATION (Agent Browser + curl): researcher dashboard/data-explorer/dataset-details/gis/reports all render with real data + OSM tiles; admin api-monitoring renders (after fix); fisherman profile (dead link fixed) + notifications render; alert lifecycle end-to-end ACTIVE→ACKNOWLEDGED→RESOLVED persisted + reflected in UI; RBAC — fisher blocked (401/403) from all /api/admin/* and /api/researcher/*; own profile allowed (200); last-admin guard blocks demote+deactivate (400); 360px mobile no horizontal overflow; lint 0/0; dev.log no runtime errors.
+- README updated with Phase 2 highlights, testing scenarios (21-30), and the Prisma-client-regeneration note.
+
+Stage Summary:
+- All Phase 1 working features PRESERVED (no rewrites, no broken routes).
+- Phase 2 delivered: alert lifecycle (ACTIVE/ACKNOWLEDGED/EXPIRED/RESOLVED + auto-expire + metric context), notification center (severity/category/related-alert/delete), fisherman profile & preferences (fixes dead link, ownership-enforced), researcher data workspace (data explorer + dataset details + GIS + reports, all on REAL stored data, no PII, empty states), admin API monitoring (health dashboard), last-admin protection, accessibility hardening (icon+text+color for severity/status).
+- Real integrations preserved and extended: Open-Meteo, z-ai VLM, Leaflet/OSM. No fake live data, no fabricated datasets, no fabricated market prices.
+- `bun run dev` on port 3000 (daemonized). Lint: 0 errors / 0 warnings.

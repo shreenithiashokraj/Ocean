@@ -26,12 +26,19 @@ export type ViewId =
   | "fisherman.sea-conditions"
   | "fisherman.safety-alerts"
   | "fisherman.ai-fish-analysis"
+  | "fisherman.ai-fish-analysis.history"
   | "fisherman.location-navigation"
+  | "fisherman.notifications"
+  | "fisherman.profile"
   | "fisherman.settings"
   // researcher
   | "researcher.dashboard"
   | "researcher.sea-conditions"
   | "researcher.fishing-data"
+  | "researcher.data-explorer"
+  | "researcher.dataset-details"
+  | "researcher.gis"
+  | "researcher.reports"
   // admin
   | "admin.dashboard"
   | "admin.users"
@@ -39,6 +46,7 @@ export type ViewId =
   | "admin.fish-analyses"
   | "admin.locations"
   | "admin.alerts"
+  | "admin.api-monitoring"
   | "admin.settings";
 
 interface AppState {
@@ -47,9 +55,12 @@ interface AppState {
   hydrated: boolean;
   /** pending reset token (between forgot -> reset link click) */
   resetToken: string | null;
+  /** researcher dataset key for the dataset-details view */
+  selectedDatasetKey: string | null;
   setUser: (u: AuthUser | null) => void;
   setView: (v: ViewId) => void;
   setResetToken: (t: string | null) => void;
+  setSelectedDatasetKey: (k: string | null) => void;
   logoutClient: () => void;
   hydrate: () => void;
 }
@@ -61,16 +72,23 @@ export const useAppStore = create<AppState>()(
       view: "landing",
       hydrated: false,
       resetToken: null,
+      selectedDatasetKey: null,
       setUser: (u) => set({ user: u }),
       setView: (v) => set({ view: v }),
       setResetToken: (t) => set({ resetToken: t }),
-      logoutClient: () => set({ user: null, view: "landing", resetToken: null }),
+      setSelectedDatasetKey: (k) => set({ selectedDatasetKey: k }),
+      logoutClient: () => set({ user: null, view: "landing", resetToken: null, selectedDatasetKey: null }),
       hydrate: () => set({ hydrated: true }),
     }),
     {
       name: "fisherman-module-store",
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ user: s.user, view: s.view, resetToken: s.resetToken }),
+      partialize: (s) => ({
+        user: s.user,
+        view: s.view,
+        resetToken: s.resetToken,
+        selectedDatasetKey: s.selectedDatasetKey,
+      }),
     }
   )
 );
@@ -91,6 +109,10 @@ export function roleCanAccess(view: ViewId, role: Role | undefined): boolean {
       "researcher.dashboard",
       "researcher.sea-conditions",
       "researcher.fishing-data",
+      "researcher.data-explorer",
+      "researcher.dataset-details",
+      "researcher.gis",
+      "researcher.reports",
     ].includes(view);
   // FISHERMAN
   return [
@@ -98,7 +120,10 @@ export function roleCanAccess(view: ViewId, role: Role | undefined): boolean {
     "fisherman.sea-conditions",
     "fisherman.safety-alerts",
     "fisherman.ai-fish-analysis",
+    "fisherman.ai-fish-analysis.history",
     "fisherman.location-navigation",
+    "fisherman.notifications",
+    "fisherman.profile",
     "fisherman.settings",
   ].includes(view);
 }

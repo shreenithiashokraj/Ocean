@@ -1,0 +1,584 @@
+     1→     1→# Fisherman Module — Worklog
+     2→     2→
+     3→     3→This file tracks the work performed by all agents on the Fisherman Module
+     4→     4→project. Each entry starts with `---` and follows the standard template.
+     5→     5→
+     6→     6→## Project context
+     7→     7→
+     8→     8→- Single-page application at `/` (sandbox constraint), with client-side view
+     9→     9→  routing via Zustand store (`src/lib/store.ts`) simulating the multi-portal
+    10→    10→  structure requested (admin / researcher / fisherman).
+    11→    11→- Backend: Next.js App Router API routes under `/api/*`, Prisma + SQLite.
+    12→    12→- Auth: bcrypt passwords + httpOnly JWT session cookie (`src/lib/auth.ts`).
+    13→    13→- API service layer: `src/lib/api.ts` (single place to swap providers).
+    14→    14→- Shared types: `src/lib/types.ts`.
+    15→    15→- Permissions (server + client mirror): `src/lib/permissions.ts`.
+    16→    16→- Theme: deep ocean blue in `src/app/globals.css`.
+    17→    17→- Demo accounts (see README / seed):
+    18→    18→  - admin@fisherman.dev / Admin@123
+    19→    19→  - researcher@fisherman.dev / Research@123
+    20→    20→  - fisher@fisherman.dev / Fisher@123
+    21→    21→
+    22→    22→## Architecture rules for all agents
+    23→    23→
+    24→    24→- NEVER hardcode fake real-time weather/marine/AI data as live data. Real data
+    25→    25→  comes from configured APIs (Open-Meteo for weather/marine, z-ai-web-dev-sdk
+    26→    26→  VLM for fish analysis). If an API is unavailable, label clearly as
+    27→    27→  "Demo Data / Offline Mode".
+    28→    28→- Backend enforces roles via `requireRole(...)` from `@/lib/auth`.
+    29→    29→- Client components must use `api.*` from `@/lib/api.ts`, never `fetch` directly
+    30→    30→  to a hardcoded URL.
+    31→    31→- Use existing shadcn/ui components in `src/components/ui`.
+    32→    32→- Sticky footer: root wrapper uses `min-h-screen flex flex-col`, footer `mt-auto`.
+    33→    33→- Add new API routes under `src/app/api/<service>/route.ts`.
+    34→    34→- Append your own work record below using the template in the system prompt.
+    35→    35→
+    36→    36→---
+    37→    37→
+    38→    38→## Task 5 — AI Fish Analysis (VLM)
+    39→    39→
+    40→    40→- **Agent**: Z.ai Code (Task 5)
+    41→    41→- **Task**: Build the AI Fish Analysis module — backend VLM route
+    42→    42→  (POST/GET), DELETE-by-id route, and the client-side `FishAnalysisView`
+    43→    43→  (uploader + result card + history list with delete confirm).
+    44→    44→
+    45→    45→### Files created
+    46→    46→
+    47→    47→1. `src/app/api/fish-analysis/route.ts` — POST + GET, `runtime = "nodejs"`.
+    48→    48→   POST: `requireUser()` guard, validates image data URL (must start with
+    49→    49→   `data:image/`, only jpeg/png/webp, ≤8 MB → 422 on bad input), calls
+    50→    50→   the VLM via `zai.chat.completions.createVision(...)`, parses a strict
+    51→    51→   JSON response (loose JSON parser with code-fence stripping + fallback
+    52→    52→   to a notes-only row on parse failure), persists a `FishAnalysis` row,
+    53→    53→   logs every call via `logApiCall({ service: "fish-analysis", ... })`.
+    54→    54→   GET: lists the current user's analyses newest first.
+    55→    55→2. `src/app/api/fish-analysis/[id]/route.ts` — DELETE, `runtime = "nodejs"`.
+    56→    56→   Looks up the row, returns 404 if missing, 403 if `row.userId !==
+    57→    57→   session.sub` (fisherman owns their own analyses), otherwise deletes +
+    58→    58→   returns `{ ok: true }`.
+    59→    59→3. `src/components/fish-analysis/fish-analysis-view.tsx` — main client view
+    60→    60→   (`'use client'`). Exports default + named `FishAnalysisView`. Layout:
+    61→    61→   `mx-auto max-w-6xl px-4 py-6 sm:px-6`. Drag-drop uploader + file input
+    62→    62→   (accept jpeg/png/webp), client-side type/size validation, image preview
+    63→    63→   with remove button, simulated upload progress bar, "Analyze Fish"
+    64→    64→   button (purple gradient), loading state with skeleton + "Analyzing
+    65→    65→   image with AI…" spinner, full result card (species, confidence %
+    66→    66→   with Progress bar, alternative-species chips, size/weight metric
+    67→    67→   boxes, characteristics bullets, identification notes, amber
+    68→    68→   quality-warning notice, market-price section showing `Unavailable`
+    69→    69→   when no API configured, thumbnail), amber prediction disclaimer,
+    70→    70→   expandable history list with AlertDialog-gated delete.
+    71→    71→
+    72→    72→### Wiring change
+    73→    73→
+    74→    74→`src/components/modules/index.tsx` — replaced the `FishAnalysisView`
+    75→    75→stub with `export { default as FishAnalysisView } from
+    76→    76→"@/components/fish-analysis/fish-analysis-view"` so the module router
+    77→    77→uses the real implementation. Surgical one-line addition; other stubs
+    78→    78→were not touched.
+    79→    79→
+    80→    80→### VLM SDK call (verified via the VLM skill)
+    81→    81→
+    82→    82→```ts
+    83→    83→const ZAIModule = await import("z-ai-web-dev-sdk");
+    84→    84→const ZAI = (ZAIModule as { default?: unknown }).default ?? ZAIModule;
+    85→    85→const zai = await (ZAI as { create: () => Promise<VLMClient> }).create();
+    86→    86→const completion = await zai.chat.completions.createVision({
+    87→    87→  messages: [{
+    88→    88→    role: "user",
+    89→    89→    content: [
+    90→    90→      { type: "text", text: prompt },
+    91→    91→      { type: "image_url", image_url: { url: dataUrl } },
+    92→    92→    ],
+    93→    93→  }],
+    94→    94→  thinking: { type: "disabled" },
+    95→    95→});
+    96→    96→```
+    97→    97→
+    98→    98→Key learnings:
+    99→    99→- The vision method is `chat.completions.createVision(...)` — NOT
+   100→   100→  `chat.completions.create(...)`.
+   101→   101→- SDK is dynamic-imported inside the route handler so it can never end
+   102→   102→  up in a client bundle.
+   103→   103→- `content` may be string OR array of content blocks; `contentToString()`
+   104→   104→  handles both, plus an object-with-`.text` shape.
+   105→   105→- Strict-JSON prompt + loose JSON parser (strips ```json fences, extracts
+   106→   106→  first `{...}` block). On parse failure, falls back to a row with null
+   107→   107→  species + raw text in `notes` so the UI surfaces a graceful state.
+   108→   108→
+   109→   109→### Behavior rules honored
+   110→   110→
+   111→   111→- Image type/size validated on BOTH client and server.
+   112→   112→- Upload progress + analysis loading state visible to user.
+   113→   113→- Graceful API error handling (toast + `ErrorState`).
+   114→   114→- Market price never invented — `analysis.market` is `null` when
+   115→   115→  `FISH_MARKET_API_URL` / `FISH_MARKET_API_KEY` are unset; UI shows the
+   116→   116→  `Unavailable` component with an env-var hint.
+   117→   117→- Backend enforces that the fisherman owns their own analyses (DELETE
+   118→   118→  returns 403 on ownership mismatch).
+   119→   119→- Failed VLM attempts are still persisted (null species + error in
+   120→   120→  `notes`) so the fisherman sees a record of every attempt.
+   121→   121→
+   122→   122→### Verification
+   123→   123→
+   124→   124→- `bun run lint`: 0 errors / 0 warnings in my files. (Remaining 2
+   125→   125→  warnings live in `src/app/page.tsx`, owned by another agent.)
+   126→   126→- `GET /api/fish-analysis` → 401 (route compiles + auth guard fires +
+   127→   127→  `ApiLog` INSERT visible in `dev.log`).
+   128→   128→- `DELETE /api/fish-analysis/test` → 401 (compiles + auth guard fires +
+   129→   129→  `ApiLog` INSERT visible).
+   130→   130→- `POST /api/fish-analysis` → 401 (compiles + auth guard fires +
+   131→   131→  `ApiLog` INSERT visible).
+   132→   132→- `GET /` → 200 (re-export in `modules/index.tsx` compiles cleanly when
+   133→   133→  the SPA shell renders).
+   134→   134→
+   135→   135→### Stage Summary
+   136→   136→
+   137→   137→Task 5 complete. All three required files written; the route is wired
+   138→   138→into the SPA via a one-line re-export in `modules/index.tsx`. The
+   139→   139→z-ai-web-dev-sdk VLM is called backend-only via dynamic import, with a
+   140→   140→strict-JSON prompt + loose parser + graceful fallback. Image validation
+   141→   141→runs on both client and server; ownership is enforced on delete; no
+   142→   142→prices are invented. Lint passes for my files; dev server compiles all
+   143→   143→three new routes and serves the SPA without errors.
+   144→   144→
+   145→   145→---
+   146→   146→
+   147→   147→## Task ID: 6
+   148→   148→
+   149→   149→- **Agent**: location-navigation-agent
+   150→   150→- **Task**: Implement the Location & Navigation module end-to-end — backend
+   151→   151→  REST routes for saved locations + curated fishing spots, plus a
+   152→   152→  real-Leaflet/OpenStreetMap client map view with geolocation, place
+   153→   153→  search, save/delete flows, and distance-sorted fishing harbors.
+   154→   154→
+   155→   155→### Work Log
+   156→   156→
+   157→   157→- Read worklog + conventions. Confirmed `api.ts` already declares
+   158→   158→  `listSavedLocations`, `saveLocation`, `deleteLocation`, `searchPlaces`,
+   159→   159→  and `listFishingSpots` — these are the client contract for this module.
+   160→   160→- Created `src/app/api/locations/route.ts`:
+   161→   161→  - `GET` → `requireUser()`, lists current user's saved locations
+   162→   162→    (`db.savedLocation.findMany where userId=sub`) newest-first.
+   163→   163→    Returns `{locations:[{id,name,latitude,longitude,notes,category,createdAt}]}`.
+   164→   164→  - `POST` → `requireUser()`. Body `{name,lat,lng,notes?,category?}`.
+   165→   165→    Validates name (≥2 chars), lat (-90..90), lng (-180..180),
+   166→   166→    category (one of fishing|harbor|home|waypoint, default "fishing").
+   167→   167→    Returns `201 {location:{...}}`.
+   168→   168→  - `runtime = "nodejs"`.
+   169→   169→- Created `src/app/api/locations/[id]/route.ts`:
+   170→   170→  - `DELETE` → `requireUser()`. Finds row; if not found OR
+   171→   171→    `userId !== session.sub` → `404 Not found` (no ownership leak).
+   172→   172→    Otherwise deletes. Returns `{ok:true}`. `runtime = "nodejs"`.
+   173→   173→- Created `src/app/api/fishing-spots/route.ts`:
+   174→   174→  - `GET` → `requireUser()`. Returns ALL `FishingSpot` rows from DB
+   175→   175→    (curated real harbor/port coords from seed). Optional `lat`,`lng`
+   176→   176→    query params trigger haversine `distanceKm` computation + nearest-first
+   177→   177→    sort. NO invented fish-population data — `species` field comes from DB
+   178→   178→    only (may be empty string). `runtime = "nodejs"`.
+   179→   179→- Created `src/components/location/leaflet-map.tsx` (client-only):
+   180→   180→  - Imports `leaflet/dist/leaflet.css` at the top (Turbopack handles it).
+   181→   181→  - Calls `L.Icon.Default.mergeOptions(...)` with the unpkg 1.9.4 marker
+   182→   182→    icons (fixes bundler-broken default icons).
+   183→   183→  - Imperative `L.map(ref, {center, zoom, scrollWheelZoom:true})` in a
+   184→   184→    `useEffect`; adds OSM tile layer with `© OpenStreetMap contributors`
+   185→   185→    attribution; adds a `L.layerGroup` for cheap clear+redraw on prop
+   186→   186→    changes; cleanup `map.remove()` on unmount.
+   187→   187→  - Renders user marker (blue) + accuracy circle when `accuracy > 0`;
+   188→   188→    general `markers[]` (per-marker color); a `searchMarker` (purple);
+   189→   189→    `onMapClick` propagates `lat,lng` to parent.
+   190→   190→  - SSR safety: NO `useState` mounted guard (lint forbids
+   191→   191→    `react-hooks/set-state-in-effect`); instead, the parent view wraps
+   192→   192→    this component in `next/dynamic({ ssr:false })` so it only mounts on
+   193→   193→    the client.
+   194→   194→  - Exports both named `LeafletMap` and default.
+   195→   195→- Created `src/components/location/location-navigation-view.tsx`:
+   196→   196→  - Layout: `mx-auto max-w-7xl px-4 py-6 sm:px-6` with a 2-col grid on
+   197→   197→    `lg:` (left = controls/cards `max-w-md`, right = sticky map
+   198→   198→    `h-[600px]`). On mobile the map stacks below the controls.
+   199→   199→  - Current Location card: `LocateFixed` "Use my location" button
+   200→   200→    (`navigator.geolocation.getCurrentPosition` with high-accuracy,
+   201→   201→    15 s timeout); shows lat/lng + accuracy (m); "Refresh" button.
+   202→   202→    On `PERMISSION_DENIED` (or unsupported) → toast + amber banner +
+   203→   203→    manual lat/lng inputs as fallback. `applyManualLocation` validates
+   204→   204→    `-90..90` and `-180..180` before applying.
+   205→   205→  - Search Location card: Input + button → `api.searchPlaces(q)` → list
+   206→   206→    of `{name,region,country}`. Clicking a result pins it (purple marker)
+   207→   207→    + recenters map. Gracefully degrades when `/api/places/search` 404s:
+   208→   208→    shows a warning toast instructing the user to use geolocation or
+   209→   209→    map-click capture instead. (Note: `/api/places/search` is NOT in
+   210→   210→    scope for this task — left for another agent.)
+   211→   211→  - "Save current point" button → opens a Dialog (name, category via
+   212→   212→    `Select`, notes) → `api.saveLocation` → toast + refresh saved list.
+   213→   213→    Disabled if no point is selected (geolocation / search / map-click
+   214→   214→    must produce a coordinate first).
+   215→   215→  - Saved Locations list (`scroll-ocean max-h-80`): each item shows
+   216→   216→    name, coords, category Badge, client-computed haversine distance
+   217→   217→    from current location (when known), "Show on map" (recenters +
+   218→   218→    popup), and "Delete" (AlertDialog confirm). Empty state when none.
+   219→   219→  - Fishing Spots list: loads via `api.listFishingSpots(currentLat,
+   220→   220→    currentLng)` once geolocation resolves (also auto-fetches with no
+   221→   221→    reference point if user denies geolocation). Each spot: name,
+   222→   222→    region, distance, `bottomType` Badge (when present), depth (when
+   223→   223→    present). Species rendered via `Unavailable` component when empty,
+   224→   224→    per the no-fabricated-fish-data rule.
+   225→   225→  - Map markers: user (blue, accuracy circle), saved (green per
+   226→   226→    category), fishing spots (amber, capped at 50), search (purple).
+   227→   227→    Clicking the map captures a coordinate (red corner badge) which
+   228→   228→    becomes the save target.
+   229→   229→  - Uses `LoadingState` / `ErrorState` / `EmptyState` from
+   230→   230→    `@/components/common/states`. All cards use `glass-card` +
+   231→   231→    `animate-fade-up`. Sticky footer handled by `AppShell`.
+   232→   232→- Wired the new view into `src/components/modules/index.tsx` by
+   233→   233→  replacing the local stub with
+   234→   234→  `export { LocationNavigationView } from "@/components/location/location-navigation-view";`.
+   235→   235→  Removed the unused `cn` import. Other stub views left intact for their
+   236→   236→  owning agents.
+   237→   237→- Ran the seed (`bun run db:seed`) to populate the 5 curated FishingSpot
+   238→   238→  rows (Chennai, Kochi, Mangalore, etc.).
+   239→   239→- Tested the new API endpoints end-to-end with curl as `fisher@fisherman.dev`:
+   240→   240→  - `POST /api/auth/sign-in` → 200.
+   241→   241→  - `GET /api/locations` → `{locations:[]}` (empty for fresh user).
+   242→   242→  - `POST /api/locations` with valid body → 201 + created row.
+   243→   243→  - `GET /api/locations` again → returns the new row.
+   244→   244→  - `DELETE /api/locations/:id` → `{ok:true}`.
+   245→   245→  - `POST /api/locations` with `name:"X"` → 422 "Name must be at least 2 characters".
+   246→   246→  - `POST /api/locations` with `lat:999` → 422 "Latitude must be between -90 and 90".
+   247→   247→  - `GET /api/fishing-spots?lat=13.0827&lng=80.2707` → spots sorted
+   248→   248→    nearest-first with `distanceKm` field; Chennai = 0 km at the top.
+   249→   249→  - `GET /api/fishing-spots` (no lat/lng) → spots WITHOUT `distanceKm`.
+   250→   250→  - `GET /api/locations` (no cookie) → 401.
+   251→   251→  - `GET /api/fishing-spots` (no cookie) → 401.
+   252→   252→- Ran `bun run lint` → 0 errors, 0 warnings in my files. Only 2
+   253→   253→  pre-existing warnings remain in `src/app/page.tsx` (unused
+   254→   254→  eslint-disable directives that pre-date this task).
+   255→   255→- Checked `dev.log` — server compiling my new code in 184-316 ms, all
+   256→   256→  `GET /` returning 200, no runtime errors. (An older `EADDRINUSE`
+   257→   257→  line from a duplicate startup attempt was harmless — the live
+   258→   258→  server on port 3000 is the one answering 200s.)
+   259→   259→
+   260→   260→### Stage Summary
+   261→   261→
+   262→   262→- Backend: 3 new API routes (`/api/locations` GET+POST,
+   263→   263→  `/api/locations/[id]` DELETE, `/api/fishing-spots` GET), all auth-guarded
+   264→   264→  with `requireUser()`, server-side coordinate validation, ownership
+   265→   265→  check on delete.
+   266→   266→- Frontend: real Leaflet + OpenStreetMap map (NOT a fake image) with
+   267→   267→  proper attribution; geolocation with graceful permission-denial
+   268→   268→  fallback to manual entry; place search with graceful 404 handling;
+   269→   269→  save/delete flows with dialog confirmations; distance-sorted fishing
+   270→   270→  spots list; click-to-capture-coordinate flow.
+   271→   271→- Strictly followed "no fabricated fish data" rule — species only
+   272→   272→  rendered when non-empty, otherwise `Unavailable` pill.
+   273→   273→- Strictly followed "files I create" rule — only the 5 listed files
+   274→   274→  plus a single-line wiring edit in `src/components/modules/index.tsx`.
+   275→   275→  The `/api/places/search` route was NOT created (out of scope); the UI
+   276→   276→  degrades gracefully with a clear warning.
+   277→   277→- Known limitation: marker icons loaded from unpkg CDN (per the task
+   278→   278→  spec's explicit fix) — if offline, markers will fall back to broken
+   279→   279→  images. Acceptable per task constraints.
+   280→   280→- All API endpoints verified working via curl with valid + invalid
+   281→   281→  inputs. Lint clean.
+   282→   282→
+   283→   283→
+   284→   284→---
+   285→   285→
+   286→   286→## Task 4 — Safety & Alert System (safety-alerts-agent)
+   287→   287→
+   288→   288→**Agent**: safety-alerts-agent
+   289→   289→**Task**: Implement the Safety & Alert System module — alert engine, notifications API, and the fisherman-facing Safety & Alert System view.
+   290→   290→
+   291→   291→### Work Log
+   292→   292→
+   293→   293→- Read `worklog.md`, `prisma/schema.prisma`, `src/lib/{types,api,auth,weather,db,store}.ts`, `prisma/seed.js`, and `src/components/modules/index.tsx` to learn conventions.
+   294→   294→- Created 5 API route files:
+   295→   295→  - `src/app/api/alerts/route.ts` — GET list (own + broadcast), supports `?unread=1`.
+   296→   296→  - `src/app/api/alerts/run/route.ts` — POST alert engine.
+   297→   297→  - `src/app/api/alerts/[id]/read/route.ts` — POST mark-read with ownership guard.
+   298→   298→  - `src/app/api/notifications/route.ts` — GET list (per-user, newest first, limit 100).
+   299→   299→  - `src/app/api/notifications/[id]/read/route.ts` — POST mark-read (strict owner).
+   300→   300→- Created client view `src/components/safety-alerts/safety-alerts-view.tsx` (default + named `SafetyAlertsView`):
+   301→   301→  - StatCard row (total / critical / unread / last alert), severity-color-striped alert cards (LOW=slate, MODERATE=amber, HIGH=orange, CRITICAL=red), type icon per alert (Wind/Waves/Rain/Storm/Visibility), click → optimistic mark-read + shadcn Dialog with full details, "Run alert check now" / "Show unread only" Switch / "Mark all read" controls, 60s auto-refresh, Loading/Error/Empty states, safety disclaimer `<aside role="note">`, responsive 1/2/3-col grid, accessible (`aria-label`, `aria-busy`, focus rings, semantic `<header>/<section>/<aside>`).
+   302→   302→- Wired the new view in by editing `src/components/modules/index.tsx` to re-export `SafetyAlertsView` from the real file (replaced the stub).
+   303→   303→- Ran `bun run lint` — my files contribute 0 errors / 0 warnings. (The 1 project-level lint error is in `src/components/sea-conditions/sea-conditions-view.tsx`, owned by another agent.)
+   304→   304→- End-to-end verified via curl: all routes 401 unauthed; authed fisher gets `{alerts:[]}` 200, notifications list 200, `POST /api/alerts/run` returns `{created,checked}` 200, `POST /api/alerts/:id/read` returns `{ok:true}` 200. Dev log shows the expected SQL `WHERE (userId = ? OR userId IS NULL) ORDER BY createdAt DESC` for the list and the unread filter wraps with `isRead = ? AND (...)`. The previous `GET /api/notifications 404` spam from the header poller has stopped.
+   305→   305→
+   306→   306→### Alert engine (POST /api/alerts/run) summary
+   307→   307→
+   308→   308→1. `requireUser()` — any role. ADMIN → `userId=null` (broadcast); others → `userId=session.sub`.
+   309→   309→2. Coordinates: JSON body `{lat,lng}` > query `?lat=&lng=` > Chennai default (13.0827, 80.2707), clamped to valid ranges.
+   310→   310→3. `fetchWeatherMarine(lat, lng)` for current conditions (Open-Meteo, with clearly-labelled demo fallback when offline).
+   311→   311→4. Loads all `AlertThreshold` rows.
+   312→   312→5. Maps `metric`→`SeaConditionData` field; skips null/non-finite readings; otherwise increments `checked`.
+   313→   313→6. Severity: `pressureHpa` inverse (lower=worse) per spec. **Documented deviation:** `visibilityM` is also treated as inverse because the seeded thresholds (caution=5000, high=2000, critical=1000) only make sense under lower=worse semantics — following the spec literally would flag clear-weather visibility (10000m) as CRITICAL. Rationale is in the source comment on `severityFor()`.
+   314→   314→7. Metric→type: wind→WIND, wave→WAVE, precipitation→RAIN, visibility→VISIBILITY, pressure→STORM.
+   315→   315→8. De-dupe: skips if an UNREAD alert of the same `type`/`severity`/`userId` exists from the last 6 hours.
+   316→   316→9. Persists `WeatherAlert` (`source="Fisherman Module Alert Engine"`, endTime = now+6h) + `Notification` (per-user if scoped; broadcast to active users if ADMIN). Notification `type` = `alert` for CRITICAL/HIGH else `warning`.
+   317→   317→10. Returns `{ created, checked }`. `logApiCall({ service: "alert-engine", endpoint: "/api/alerts/run", method: "POST", status: 200, message: "created=N" })` in `finally`; 500 record on error.
+   318→   318→- Cleaned up one false-positive test alert generated while validating the spec-literal severity logic, so the fisher account sees a clean state.
+   319→   319→
+   320→   320→### Stage Summary
+   321→   321→
+   322→   322→All 6 required files created + 1 minimal wiring edit. Backend enforces ownership (own alerts + broadcast only for read; notifications strictly owner-only; mark-read returns 404 to non-owners). Source field is always `"Fisherman Module Alert Engine"`. No fake data — uses `fetchWeatherMarine`, which labels demo data when offline. Sticky footer is handled by the existing `AppShell`. Responsive + accessible. Detailed work record at `agent-ctx/4-safety-alerts-agent.md`.
+   323→   323→
+   324→   324→---
+   325→   325→
+   326→   326→## Task ID: 3
+   327→   327→**Agent:** sea-conditions
+   328→   328→**Task:** Build the Real-Time Sea Conditions module for the Fisherman Module — backend API routes + main client view.
+   329→   329→
+   330→   330→### Work Log
+   331→   331→- Read project conventions (`worklog.md`, `lib/weather.ts`, `lib/auth.ts`, `lib/api.ts`, `lib/types.ts`, `prisma/schema.prisma`, shared UI in `components/common/*`).
+   332→   332→- Created `src/app/api/sea-conditions/route.ts` — GET handler that:
+   333→   333→  - Calls `requireUser()`; returns 401 if no session.
+   334→   334→  - Parses `lat`/`lng` query params (numbers), defaults to Chennai (13.0827, 80.2707) when missing/non-numeric, and 400s on out-of-range values.
+   335→   335→  - Runs `fetchWeatherMarine(lat,lng)` + `reverseGeocode(lat,lng)` in parallel.
+   336→   336→  - Persists a `SeaCondition` row every call (with `isDemo` flag) and logs to `ApiLog` via `logApiCall({ service: "weather", endpoint: "/api/sea-conditions", message: isDemo ? "offline-fallback" : "ok" })`.
+   337→   337→  - Returns `{ data, isDemo, source, recordedAt, label }` with `Cache-Control: no-store`. `export const runtime = "nodejs"`.
+   338→   338→- Created `src/app/api/places/search/route.ts` — GET handler that:
+   339→   339→  - Calls `requireUser()`; returns 401 if no session.
+   340→   340→  - Reads `q`, returns `{ results: [...] }` via `forwardGeocode(q)` from `@/lib/weather`. `runtime = "nodejs"`.
+   341→   341→- Created `src/components/sea-conditions/sea-conditions-view.tsx` — the main client view:
+   342→   342→  - `'use client'` view exporting both named and default `SeaConditionsView`.
+   343→   343→  - Header (title + subtitle + source + last-updated) with an auto-refresh `Select` (1m/5m/15m/30m/Off) and a "My location" button.
+   344→   344→  - Manual place search (Input + button) that calls `api.searchPlaces(q)` and shows a click-outside-to-dismiss dropdown of results to pick from.
+   345→   345→  - On mount: requests `navigator.geolocation.getCurrentPosition`; on deny/unsupported, defaults to Chennai with a sonner toast.
+   346→   346→  - Auto-refresh via `setInterval` based on `refreshMinutes` (cleared on change/unmount).
+   347→   347→  - Status banner derives Safe (wind<25 & wave<1.5, green) / Caution (wind<40 & wave<2.5, amber) / Dangerous (red) / Unknown.
+   348→   348→  - When `isDemo`, shows a prominent amber "Demo Data / Offline Mode" badge in the status banner and an amber footer notice "Live API unavailable — showing offline demo data."
+   349→   349→  - Headline metrics strip uses the shared `StatCard` (Wind Speed, Wave Height, Air Temp, Sea Surface Temp).
+   350→   350→  - Detail grid (responsive 1/2/3 cols) of custom `glass-card` cards: Location (lat/lng/accuracy + Refresh/My-location buttons), Weather Overview (WMO icon + text + air temp), Wind (speed/gusts/direction + rotated Navigation arrow), Wave (height/period/direction + rotated Compass), Temperature (air/sea/humidity), Atmospherics (pressure/precip/visibility), Sun (sunrise/sunset in local time using `utcOffsetSeconds`).
+   351→   351→  - Marine condition chart — recharts `AreaChart` with dual Y-axes for wave height (left) and wind speed (right), gradient fills, ChartContainer/ChartTooltip, and a graceful empty/loading state.
+   352→   352→  - Loading uses `CardSkeleton`; errors use `ErrorState` with retry; missing values use `Unavailable`. Sticky footer is left to AppShell.
+   353→   353→- Wired the new view into `src/components/modules/index.tsx` (replaced the `SeaConditionsView` stub with `export { SeaConditionsView } from "@/components/sea-conditions/sea-conditions-view"` — only that export was touched).
+   354→   354→- Verified by checking `dev.log` tail: `GET /api/sea-conditions` and `GET /api/places/search?q=chennai` both compile cleanly (~120ms) and return 401 when unauthenticated. `GET /` (which compiles the whole module tree including the new view) renders 200 with no errors. Removed two unused icon imports (`Droplets`, `Eye`) after lint review.
+   355→   355→
+   356→   356→### Stage Summary
+   357→   357→Real-Time Sea Conditions module is complete and wired in. Fishermen (and admins) can sign in, click "Sea Conditions" in the sidebar, and see live Open-Meteo weather + marine data for their GPS location (or a searched coastal place) with auto-refresh, a safety status banner, individual metric cards with rotated compass arrows, and a 24-hour wave/wind forecast chart. When the upstream API is unreachable, the backend falls back to clearly-labeled demo data and the UI shows a prominent amber "Demo Data / Offline Mode" notice so fake values are never shown as live. Each request is persisted to `SeaCondition` for history/admin views, and each external API call is logged to `ApiLog`. No compile errors. No issues to flag.
+   358→   358→
+   359→   359→---
+   360→   360→
+   361→   361→## Task ID: 7
+   362→   362→
+   363→   363→- **Agent**: admin-portal-agent
+   364→   364→- **Task**: Build the Admin Portal — all admin-only client views + their API routes (users, settings, thresholds, api-logs, sea-conditions, fish-analyses, locations) and the seven admin views (dashboard, users, sea-conditions, alerts, fish-analyses, locations, settings).
+   365→   365→
+   366→   366→### Work Log
+   367→   367→
+   368→   368→- Read `worklog.md`, `prisma/schema.prisma`, `src/lib/{api,auth,db,store,types}.ts`, `.env.example`, `src/components/modules/index.tsx`, the existing alerts + locations + fish-analysis routes for pattern reference. Confirmed `api.ts` already declares the 10 admin methods (listUsers, updateUserRole, getSettings, upsertSetting, getThresholds, upsertThreshold, getApiLogs, getAdminSeaConditions, getAdminFishAnalyses, getAdminLocations).
+   369→   369→- Created 8 API route files under `src/app/api/admin/`:
+   370→   370→  - `users/route.ts` — GET lists all users with profile phone.
+   371→   371→  - `users/[id]/route.ts` — PATCH role + isActive. Validates role ∈ {ADMIN, RESEARCHER, FISHERMAN}; rejects non-boolean isActive with 422; rejects self-deactivation with 400 (cannot lock yourself out); 404 on missing user.
+   372→   372→  - `settings/route.ts` — GET lists all SystemSetting rows. POST upsert by key; category defaults to "general" and is coerced into the allowed set {general, api, alert, branding}. Rejects keys containing `apiKey`/`secret`/`password`/`token` with 422 — secrets are NEVER stored in the non-secret settings table.
+   373→   373→  - `thresholds/route.ts` — GET lists AlertThresholds. POST upsert by metric. caution/high/critical must all be finite numbers; unit capped at 20 chars; non-numeric values rejected with 422.
+   374→   374→  - `api-logs/route.ts` — GET newest 100 ApiLog rows newest first, with the acting user's email included via Prisma `include`.
+   375→   375→  - `sea-conditions/route.ts` — GET newest 100 SeaCondition rows newest first, with user. `payload` (the JSON string) IS returned so the admin UI can pretty-print it in a row-click dialog.
+   376→   376→  - `fish-analyses/route.ts` — GET newest 100 FishAnalysis rows newest first, with user. `imageDataUrl` is intentionally OMITTED from the list payload to keep responses small; each row carries a boolean `hasImage` instead.
+   377→   377→  - `locations/route.ts` — GET combined view. Runs `Promise.all` to fetch SavedLocation (with user) + FishingSpot in one request. Returns `{records: {saved: [...], spots: [...]}}` (the api.ts wrapper types this as `{records: unknown[]}` and the view casts to the expected object shape with `Array.isArray` runtime guards).
+   378→   378→- Created 7 client views under `src/components/admin/`:
+   379→   379→  - `admin-dashboard-view.tsx` — Overview dashboard. `Promise.all` fetches 7 endpoints in parallel; each failing endpoint degrades individually via `safeCatch` so one 500 doesn't break the whole dashboard. 10 StatCards in a responsive grid (2/3/4/5 cols): total users, fishermen, researchers, total alerts, critical alerts, fish analyses, sea-condition records, saved locations, fishing spots, recent API logs. "System Health" card showing live API providers from settings (non-secret only). "Recent API Logs" table (last 10) with HTTP-status-color-coded Badge. "Recent Alerts" mini-list (last 5) with severity chip. Amber disclaimer `<aside>`.
+   380→   380→  - `admin-users-view.tsx` — User table with controls. Search by email/name, filter by role (Select). Per-row role Select, isActive Switch + Badge, "Save" button (disabled when row is clean). Self row marked with "you" badge; self-deactivation Switch disabled (backend also rejects with 400). Toast on save.
+   381→   381→  - `admin-sea-conditions-view.tsx` — Records table with 3-stat strip (Total/Live/Demo). Click any row → Dialog with pretty-printed JSON payload (using `JSON.stringify(JSON.parse(raw), null, 2)` with fallback to raw string). source/isDemo Badges.
+   382→   382→  - `admin-alerts-view.tsx` — Alerts table with 3-stat strip (Total/Critical/Unread). Filter by severity Select. Per-row: title, type chip (color-coded per type), severity chip (color-coded per severity), location (or "broadcast" Radio icon for null userId), Read Badge, created time. Pulls alerts from `/api/alerts` (admin can see broadcast + own).
+   383→   383→  - `admin-fish-analyses-view.tsx` — Fish analyses table with 3-stat strip (Total/Identified/Avg confidence). Per-row: species (or "failed" badge when null), confidence Progress bar (handles both 0..1 and 0..100 ranges), size/weight, user, has-image indicator (image NOT in payload — boolean only). `qualityWarning` shown as amber sub-line.
+   384→   384→  - `admin-locations-view.tsx` — Locations with Tabs. Tab 1: Saved Locations table (every user's saved locations with category chip + user). Tab 2: Fishing Spots table (curated catalog with region/depth/bottom-type badge/species/source). Both tables wrapped in `scroll-ocean max-h-[32rem] overflow-y-auto`.
+   385→   385→  - `admin-settings-view.tsx` — Settings + thresholds. Prominent amber info card at top: "API keys for weather/marine/market/AI are configured via server environment variables (see .env.example). This UI manages non-secret settings and thresholds only." Tabs: General, API Providers, Alert Thresholds, Branding. General/Branding: editable list with per-row Save. API Providers: editable list with the relevant env-var NAME shown beneath each setting key (NEVER the value) + a separate read-only env-var reference card listing all server env vars. Alert Thresholds: editable list (metric, caution, high, critical, unit) with per-row Save; adds a cyan "How the alert engine uses these" explainer noting visibility/pressure inverse semantics.
+   386→   386→- Did NOT edit `src/components/modules/index.tsx` per the task instructions — the orchestrator wires exports afterward.
+   387→   387→- Verified with curl:
+   388→   388→  - `GET /api/admin/users` → 200 (admin cookie) returning 3 users; 401 (no cookie); 401 (fisher cookie).
+   389→   389→  - `PATCH /api/admin/users/:fisher_id` with valid body → 200 `{ok:true}`; with bad role → 422; self-deactivation → 400.
+   390→   390→  - `POST /api/admin/thresholds` upsert → 200; non-numeric value → 422.
+   391→   391→  - `POST /api/admin/settings` upsert → 200; key=`apiKey` → 422 with "Secrets must be configured via server environment variables".
+   392→   392→  - `GET /api/admin/sea-conditions` returns `payload` JSON string.
+   393→   393→  - `GET /api/admin/fish-analyses` returns `hasImage` boolean, no `imageDataUrl`.
+   394→   394→  - `GET /api/admin/locations` returns `{records: {saved: [], spots: [5 curated]}}`.
+   395→   395→  - `GET /` → 200 (SPA still renders).
+   396→   396→- Ran `bun run lint` → 0 errors / 0 warnings (clean).
+   397→   397→- Checked `dev.log` — all admin routes compiling in 2-130ms, returning expected status codes. No compile errors anywhere.
+   398→   398→
+   399→   399→### Stage Summary
+   400→   400→
+   401→   401→All 8 admin API routes + 7 admin client views created. Every admin route is guarded by `requireRole("ADMIN")` returning 401 when not admin (per spec, returning 401 for both unauthenticated and non-admin sessions is acceptable). Secrets are never exposed in the settings UI — only env-var NAMES are shown, and the upsert endpoint rejects keys that look like secrets (`apiKey`, `secret`, `password`, `token`). All views use glass-card, scroll-ocean, LoadingState/ErrorState/EmptyState, StatCard, and responsive tables with `overflow-x-auto`. The dev server hot-reloads cleanly; no compile errors. Lint passes for all files. Detailed work record at `agent-ctx/7-admin-portal-agent.md`.
+   402→   402→
+   403→   403→
+   404→   404→---
+   405→   405→
+   406→   406→## Task ID: 8
+   407→   407→
+   408→   408→- **Agent**: researcher-portal-agent (Z.ai Code)
+   409→   409→- **Task**: Build the Researcher Portal (3 views) + Fisherman Dashboard
+   410→   410→  (1 view) for the Fisherman Module — 3 new backend API routes
+   411→   411→  (RESEARCHER/ADMIN-guarded, no PII), 4 client views (3 researcher +
+   412→   412→  1 fisherman dashboard), and 3 new methods appended to `src/lib/api.ts`.
+   413→   413→
+   414→   414→### Work Log
+   415→   415→
+   416→   416→- Read `worklog.md`, `src/lib/{store,api,auth,types,weather,db}.ts`,
+   417→   417→  `prisma/schema.prisma`, `src/components/modules/index.tsx`,
+   418→   418→  `src/components/module-router.tsx`, `src/components/common/*`,
+   419→   419→  `src/components/role-badge.tsx`, `src/components/brand.tsx`,
+   420→   420→  `src/components/sea-conditions/sea-conditions-view.tsx`,
+   421→   421→  `src/components/safety-alerts/safety-alerts-view.tsx`, the shared
+   422→   422→  shadcn `chart.tsx`/`table.tsx`/`badge.tsx`/`dialog.tsx`, and the
+   423→   423→  existing `/api/sea-conditions/route.ts` to learn conventions before
+   424→   424→  writing anything.
+   425→   425→- Created **3 backend API routes** (all `runtime = "nodejs"`, all
+   426→   426→  guarded by `requireRole("RESEARCHER","ADMIN")`, all logging via
+   427→   427→  `logApiCall({ service: "researcher", ... })`):
+   428→   428→  1. `src/app/api/researcher/sea-conditions/route.ts` — GET. Lists
+   429→   429→     stored `SeaCondition` rows newest-first, limit 200. Strips
+   430→   430→     `userId` and any other PII from the response — only environmental
+   431→   431→     fields are returned (id, lat, lng, locationLabel, source, isDemo,
+   432→   432→     recordedAt, payload). Returns `{ records: [...] }`.
+   433→   433→  2. `src/app/api/researcher/fishing-data/route.ts` — GET. Returns
+   434→   434→     AGGREGATE research data in one response object:
+   435→   435→     `speciesDistribution` (group-by-species count + avg confidence,
+   436→   436→     sorted by count desc), `confidenceBuckets` (4 buckets: <0.5,
+   437→   437→     0.5–0.7, 0.7–0.85, >0.85), `totalAnalyses`, `recentSeaConditions`
+   438→   438→     (last 10, environmental only), `alertSummary` (severity→count
+   439→   439→     + unread), `fishingSpots` (all curated spots), `monthlyTrend`
+   440→   440→     (analyses per month over last 6 months, including the current
+   441→   441→     month). Aggregations are computed in JS (Prisma `groupBy` can't
+   442→   442→     compute avg confidence on SQLite) from the project's small
+   443→   443→     FishAnalysis set — no individual fisherman identities are exposed.
+   444→   444→  3. `src/app/api/researcher/sea-conditions/live/route.ts` — GET.
+   445→   445→     Query `lat`,`lng` (defaults to Chennai; range-validated). Calls
+   446→   446→     `fetchWeatherMarine(lat,lng)` + `reverseGeocode(lat,lng)` in
+   447→   447→     parallel and returns `{ data, isDemo, source, recordedAt, label }`
+   448→   448→     — same shape as `/api/sea-conditions` so the researcher view
+   449→   449→     reuses the compact card pattern. **CRITICAL: does NOT persist a
+   450→   450→     SeaCondition row** — strictly read-only environmental lookup
+   451→   451→     (researcher is not generating a fisherman-owned record). `Cache-
+   452→   452→     Control: no-store` set on the response.
+   453→   453→- Appended **3 new methods** to the `api` object in
+   454→   454→  `src/lib/api.ts` (existing methods untouched):
+   455→   455→  - `researcherSeaConditions()` → GET `/api/researcher/sea-conditions`
+   456→   456→  - `researcherLiveSeaConditions(lat,lng)` → GET
+   457→   457→    `/api/researcher/sea-conditions/live?lat=${lat}&lng=${lng}` (typed
+   458→   458→    with the same shape as `getSeaConditions`, including `label`).
+   459→   459→  - `researcherFishingData()` → GET `/api/researcher/fishing-data`
+   460→   460→    (fully typed: speciesDistribution / confidenceBuckets /
+   461→   461→    totalAnalyses / recentSeaConditions / alertSummary / fishingSpots /
+   462→   462→    monthlyTrend).
+   463→   463→- Created **3 researcher client views** (each `'use client'`, layout
+   464→   464→  `mx-auto max-w-7xl px-4 py-6 sm:px-6`, glass-card, animate-fade-up,
+   465→   465→  LoadingState/ErrorState/EmptyState per panel, `scroll-ocean` for long
+   466→   466→  lists, both default + named export):
+   467→   467→  4. `src/components/researcher/researcher-dashboard-view.tsx` —
+   468→   468→     Researcher home. Welcome banner + "Refresh" button + purple
+   469→   469→     disclaimer `<aside role="note">` ("Data shown is aggregated for
+   470→   470→     research purposes. Individual fisherman identities are not
+   471→   471→     exposed."). 4 StatCards (Total Analyses / Distinct Species /
+   472→   472→     Sea-Condition Records / Active Alerts). Pulls both
+   473→   473→     `researcherFishingData()` and `researcherSeaConditions()` in
+   474→   474→     `Promise.all`. Three charts (recharts via the shared shadcn
+   475→   475→     `ChartContainer`/`ChartTooltip`): PieChart (species distribution,
+   476→   476→     donut with 10-color rotation), BarChart (confidence buckets,
+   477→   477→     rounded-top bars), LineChart (monthly analysis trend, monotone
+   478→   478→     curve). Mini-table of last 5 stored sea-condition records
+   479→   479→     (locationLabel / coords / source / isDemo badge / recordedAt).
+   480→   480→  5. `src/components/researcher/researcher-sea-conditions-view.tsx`
+   481→   481→     — Read-only. Coordinate input (lat/lng) + "Fetch live conditions"
+   482→   482→     button calling `api.researcherLiveSeaConditions(lat,lng)`.
+   483→   483→     Compact live snapshot card: 4 StatCards (Air Temp / Wind Speed /
+   484→   484→     Wave Height / Pressure) + 4 DetailChips (Sea Surface Temp / Wind
+   485→   485→     Gusts / Visibility / Humidity) + location coords. Demo data is
+   486→   486→     flagged with an amber "Live API unreachable — showing clearly-
+   487→   487→     labelled offline demo data" notice + amber Demo/Live badge.
+   488→   488→     Below: archive table of all stored records (clickable rows). Click
+   489→   489→     opens a shadcn `Dialog` with the full JSON payload pretty-printed.
+   490→   490→  6. `src/components/researcher/researcher-fishing-data-view.tsx` —
+   491→   491→     Full reports dashboard. Top row 4 StatCards (Total Analyses /
+   492→   492→     Distinct Species / Total Alerts / Curated Spots). Species
+   493→   493→     distribution: PieChart (donut) side-by-side with a sortable table
+   494→   494→     (species / count / avg confidence %). Confidence buckets BarChart
+   495→   495→     (rounded-top bars). Monthly trend AreaChart (gradient fill, last
+   496→   496→     6 months). Alert severity summary list (LOW=slate / MODERATE=
+   497→   497→     amber / HIGH=orange / CRITICAL=rose — mirrors safety-alerts view
+   498→   498→     styling). Fishing spots table (name / region / depth / bottom
+   499→   499→     type badge). Recent sea conditions strip (last 10). "Export CSV"
+   500→   500→     button — client-side `Blob` + `URL.createObjectURL` download of
+   501→   501→     `speciesDistribution` as `species-distribution-YYYY-MM-DD.csv`
+   502→   502→     (with proper CSV escaping for embedded commas/quotes). Purple
+   503→   503→     research disclaimer.
+   504→   504→- Created the **fisherman dashboard view**:
+   505→   505→  7. `src/components/dashboard/fisherman-dashboard-view.tsx` — The
+   506→   506→     fisherman's personal home. Welcome banner: "Welcome back, {name}"
+   507→   507→     (cyan name) + RoleBadge + current date (full weekday + long
+   508→   508→     date). Quick-access 2×3 grid: 4 working module cards (Sea
+   509→   509→     Conditions / Safety Alerts / AI Fish Analysis / Location &
+   510→   510→     Navigation) — each card has a gradient-tinted icon, title, short
+   511→   511→     desc, and a button that calls `setView(<view-id>)` from the
+   512→   512→     Zustand store. 2 disabled dashed cards (Catch Logging / SOS)
+   513→   513→     with "Coming Soon" badges. Three live cards populated on mount
+   514→   514→     via `Promise.allSettled` after geolocation resolves (Chennai
+   515→   515→     fallback on deny/unsupported): Current Conditions (StatCards-like
+   516→   516→     Metric chips: Air Temp / Wind / Wave / Weather text, with isDemo
+   517→   517→     notice), Safety Status (unread count + severity breakdown list),
+   518→   518→     Recent Analyses (last 3 with species + confidence % + time-ago).
+   519→   519→     Each card has its own LoadingState/ErrorState/EmptyState so one
+   520→   520→     failing call doesn't break the page.
+   521→   521→- Did NOT edit `src/components/modules/index.tsx` per the task spec
+   522→   522→  (the orchestrator wires the new exports in afterwards). The existing
+   523→   523→  stubs in that file continue to render until the orchestrator swaps
+   524→   524→  them for `export { default as ResearcherDashboardView } from
+   525→   525→  "@/components/researcher/researcher-dashboard-view"` etc.
+   526→   526→- Ran `bun run lint` — **0 errors / 0 warnings** for my files.
+   527→   527→- Ran `bunx tsc --noEmit --pretty false` — **0 type errors** in any
+   528→   528→  of the files I created or modified (the only TS errors reported are
+   529→   529→  in other agents' files: `examples/websocket/*`, `skills/*`,
+   530→   530→  `src/components/admin/admin-dashboard-view.tsx`, and an existing
+   531→   531→  cast in `src/lib/weather.ts:209`).
+   532→   532→- Verified the dev server is running (dev.log shows `GET /` 200, auth
+   533→   533→  POST 200, notifications GET 200, etc.). The 3 new researcher routes
+   534→   534→  have not yet been hit from the SPA (because the orchestrator hasn't
+   535→   535→  re-wired `modules/index.tsx` yet) — once the orchestrator swaps in
+   536→   536→  the new exports, the SPA will trigger compilation of
+   537→   537→  `/api/researcher/*` on first navigation. **Note on local curl
+   538→   538→  verification**: the dev server is bound to `:::3000` in a separate
+   539→   539→  network namespace from this shell, so direct `curl localhost:3000`
+   540→   540→  returns ECONNREFUSED from here. Verified lint + tsc instead.
+   541→   541→
+   542→   542→### Stage Summary
+   543→   543→
+   544→   544→All 7 required files written (3 API routes + 3 researcher views + 1
+   545→   545→fisherman dashboard view) plus 3 appended `api.ts` methods. Backend
+   546→   546→enforces `requireRole("RESEARCHER","ADMIN")` on all 3 researcher
+   547→   547→routes and strips userId / personal info from every response
+   548→   548→(researcher sees only AGGREGATE fish-analysis stats + environmental
+   549→   549→sea-condition records; never individual fisherman identities, private
+   550→   550→SavedLocations, or personal accounts). The live-conditions route does
+   551→   551→NOT persist a fisherman-owned SeaCondition row — it's strictly a
+   552→   552→read-only environmental lookup. All charts use real DB aggregates
+   553→   553→(no fake data); the live snapshot reuses the shared `fetchWeatherMarine`
+   554→   554→lib which already labels demo data via `isDemo`. CSV export is done
+   555→   555→client-side via Blob download. Sticky footer is handled by the existing
+   556→   556→AppShell. Lint + tsc clean for all my files; dev server compiles
+   557→   557→existing routes without errors.
+   558→   558→
+   559→   559→---
+   560→   560→Task ID: 9 + 10 (orchestrator integration + verification)
+   561→   561→Agent: orchestrator (main)
+   562→   562→Task: Wire all module exports into the registry, fix integration bugs, run end-to-end verification, write README.
+   563→   563→
+   564→   564→Work Log:
+   565→   565→- Rewrote src/components/modules/index.tsx to re-export all real view implementations (removed remaining stubs): sea-conditions, safety-alerts, fish-analysis, location, fisherman dashboard, 3 researcher views, 7 admin views.
+   566→   566→- Fixed src/app/api/alerts/route.ts so ADMIN sees ALL alerts (role-scoped backend query) — honors "admin views all alerts" requirement.
+   567→   567→- Fixed src/components/admin/admin-dashboard-view.tsx crash: AdminLocationsPayload type had a `records` wrapper that the stats code read as `loc.saved`/`loc.spots` directly (undefined.length → client exception). Corrected the type + the destructuring cast.
+   568→   568→- Fixed src/app/page.tsx session-persistence bug: when the httpOnly cookie was cleared/expired but localStorage still held a stale user, the app rendered a broken shell (401s). Now api.me() returning null explicitly clears the local user and routes to landing.
+   569→   569→- Fixed react-hooks/static-components lint error in sea-conditions view (dynamic weather icon rendered via createElement instead of a capitalized JSX tag).
+   570→   570→- Verified all four fisherman modules render in Agent Browser with no console/runtime errors.
+   571→   571→- Generated a real fish image (z-ai image CLI) and ran the full VLM round-trip via curl: POST /api/fish-analysis → real prediction (Yellowtail Amberjack, 0.85 confidence, characteristics, notes, market=null correctly). Verified the result appears in the fisher's history UI.
+   572→   572→- Verified the alert engine end-to-end: lowered windSpeedKmh threshold via admin API → ran /api/alerts/run → created 1 CRITICAL alert → visible in fisher's Safety Alerts UI → restored threshold.
+   573→   573→- Verified sign-up flow: created a brand-new fisherman account, auto-signed-in, redirected to Fisherman Dashboard.
+   574→   574→- Verified sticky footer: mt-auto in min-h-screen flex flex-col pushes footer to bottom on short pages and below viewport (natural flow) on long pages — no overlap.
+   575→   575→- Final: bun run lint → 0 errors / 0 warnings. dev.log → no runtime errors. Server alive (HTTP 200). DB seeded (4 users incl. test account, 5 fishing spots).
+   576→   576→- Wrote comprehensive README.md (setup, env vars, DB, API, AI, running, testing, deployment, how to edit one page).
+   577→   577→
+   578→   578→Stage Summary:
+   579→   579→- Complete, production-ready Fisherman Module SPA delivered at /.
+   580→   580→- All 3 role portals functional (Fisherman, Researcher, Admin) with backend-enforced RBAC.
+   581→   581→- 4 working fisherman modules (Sea Conditions, Safety Alerts, AI Fish Analysis, Location & Navigation); Catch Logging + SOS wired as disabled "Coming Soon".
+   582→   582→- Real integrations: Open-Meteo weather/marine, z-ai-web-dev-sdk VLM, Leaflet/OpenStreetMap. No fake live data; offline mode clearly labeled.
+   583→   583→- Demo accounts: admin@fisherman.dev / Admin@123, researcher@fisherman.dev / Research@123, fisher@fisherman.dev / Fisher@123.
+   584→   584→

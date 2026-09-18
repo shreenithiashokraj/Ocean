@@ -187,4 +187,117 @@ export const api = {
       }[];
       monthlyTrend: { month: string; analyses: number }[];
     }>("/api/researcher/fishing-data"),
+
+  // ── Phase 2: profile & preferences ────────────────────────────────────
+  getProfile: () =>
+    request<{ profile: Record<string, unknown> }>("/api/profile"),
+  updateProfile: (input: Record<string, unknown>) =>
+    request<{ ok: true; profile: Record<string, unknown> }>("/api/profile", {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+
+  // ── Phase 2: alert lifecycle ──────────────────────────────────────────
+  acknowledgeAlert: (id: string) =>
+    request<{ ok: true; status: string }>(`/api/alerts/${id}/acknowledge`, {
+      method: "POST",
+    }),
+  resolveAlert: (id: string) =>
+    request<{ ok: true; status: string }>(`/api/alerts/${id}/resolve`, {
+      method: "POST",
+    }),
+
+  // ── Phase 2: notification center ──────────────────────────────────────
+  deleteNotification: (id: string) =>
+    request<{ ok: true }>(`/api/notifications/${id}`, { method: "DELETE" }),
+  readAllNotifications: () =>
+    request<{ ok: true; updated: number }>("/api/notifications/read-all", {
+      method: "POST",
+    }),
+
+  // ── Phase 2: researcher datasets + GIS + reports ─────────────────────
+  listResearcherDatasets: () =>
+    request<{
+      datasets: {
+        key: string;
+        name: string;
+        description: string;
+        dataType: string;
+        source: string;
+        status: string;
+        fields: { key: string; label: string; type: string; options?: string[] }[];
+        recordCount: number;
+        coverage: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null;
+        lastUpdated: string | null;
+      }[];
+    }>("/api/researcher/datasets"),
+  getResearcherDataset: (key: string, params: { page?: number; pageSize?: number; search?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
+    if (params.search) qs.set("search", params.search);
+    const q = qs.toString();
+    return request<{
+      dataset: {
+        key: string;
+        name: string;
+        description: string;
+        dataType: string;
+        source: string;
+        status: string;
+        fields: { key: string; label: string; type: string; options?: string[] }[];
+      };
+      records: Record<string, unknown>[];
+      total: number;
+      page: number;
+      pageSize: number;
+      recordCount: number;
+      coverage: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null;
+    }>(`/api/researcher/datasets/${encodeURIComponent(key)}${q ? `?${q}` : ""}`);
+  },
+  getResearcherGis: (sources?: string[]) =>
+    request<{
+      points: {
+        lat: number;
+        lng: number;
+        dataset: string;
+        label: string;
+        detail?: Record<string, unknown>;
+      }[];
+      total: number;
+    }>(
+      `/api/researcher/gis${
+        sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""
+      }`
+    ),
+  listResearcherReports: () =>
+    request<{ reports: Record<string, unknown>[] }>("/api/researcher/reports"),
+  createResearcherReport: (input: {
+    title: string;
+    description?: string;
+    datasetKey: string;
+    filters?: unknown;
+    summary?: unknown;
+  }) =>
+    request<{ ok: true; report: Record<string, unknown> }>("/api/researcher/reports", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteResearcherReport: (id: string) =>
+    request<{ ok: true }>(`/api/researcher/reports/${id}`, { method: "DELETE" }),
+
+  // ── Phase 2: admin API health ─────────────────────────────────────────
+  getApiHealth: () =>
+    request<{
+      overall: "healthy" | "degraded" | "unavailable";
+      services: {
+        service: string;
+        health: "healthy" | "degraded" | "unavailable";
+        total: number;
+        errors: number;
+        lastStatus: number | null;
+        lastAt: string | null;
+        p95Ms: number | null;
+      }[];
+    }>("/api/admin/api-health"),
 };

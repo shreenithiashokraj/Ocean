@@ -8,11 +8,17 @@ import {
   SafetyAlertsView,
   FishAnalysisView,
   LocationNavigationView,
+  ProfileView,
+  NotificationsView,
   FishermanDashboardView,
   // Researcher
   ResearcherDashboardView,
   ResearcherSeaConditionsView,
   ResearcherFishingDataView,
+  ResearcherDataExplorerView,
+  ResearcherDatasetDetailsView,
+  ResearcherGisView,
+  ResearcherReportsView,
   // Admin
   AdminDashboardView,
   AdminUsersView,
@@ -21,6 +27,7 @@ import {
   AdminFishAnalysesView,
   AdminLocationsView,
   AdminSettingsView,
+  ApiMonitoringView,
 } from "@/components/modules";
 
 export function ModuleRouter() {
@@ -36,10 +43,16 @@ function ViewRenderer({ view }: { view: ViewId }) {
     case "fisherman.safety-alerts": return <SafetyAlertsView />;
     case "fisherman.ai-fish-analysis": return <FishAnalysisView />;
     case "fisherman.location-navigation": return <LocationNavigationView />;
+    case "fisherman.notifications": return <NotificationsView />;
+    case "fisherman.profile": return <ProfileView />;
     // Researcher
     case "researcher.dashboard": return <ResearcherDashboardView />;
     case "researcher.sea-conditions": return <ResearcherSeaConditionsView />;
     case "researcher.fishing-data": return <ResearcherFishingDataView />;
+    case "researcher.data-explorer": return <ResearcherDataExplorerView />;
+    case "researcher.dataset-details": return <ResearcherDatasetDetailsView />;
+    case "researcher.gis": return <ResearcherGisView />;
+    case "researcher.reports": return <ResearcherReportsView />;
     // Admin
     case "admin.dashboard": return <AdminDashboardView />;
     case "admin.users": return <AdminUsersView />;
@@ -47,6 +60,7 @@ function ViewRenderer({ view }: { view: ViewId }) {
     case "admin.alerts": return <AdminAlertsView />;
     case "admin.fish-analyses": return <AdminFishAnalysesView />;
     case "admin.locations": return <AdminLocationsView />;
+    case "admin.api-monitoring": return <ApiMonitoringView />;
     case "admin.settings": return <AdminSettingsView />;
     default:
       return (

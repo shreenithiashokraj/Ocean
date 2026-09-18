@@ -19,6 +19,16 @@ A production-ready, full-stack **smart fishing technology platform** built with 
 - 👥 **Three role portals** — Fisherman, Researcher (aggregate research data only, no PII), Admin (full system management: users, settings, thresholds, API logs, all records).
 - 🧱 **Scalable architecture** — a single API service layer (`src/lib/api.ts`) means any provider can be swapped without rewriting the UI. Catch Logging & SOS are wired as "Coming Soon" placeholders so they can be added later without touching existing modules.
 
+### Phase 2 additions
+
+- 🔄 **Alert lifecycle** — alerts now carry `ACTIVE → ACKNOWLEDGED → EXPIRED → RESOLVED` status, with `metric`, `actualValue` and `thresholdValue` context. ACTIVE alerts past their `endTime` auto-expire. Acknowledge/Resolve actions are ownership-checked on the backend.
+- 🔔 **Notification center** — a full `/fisherman/notifications` page with severity, category, related-alert linking, mark-read / mark-all-read / delete. Notifications are linked to their source alert (`alertId`) and carry a `severity`. The header badge is driven by real backend data.
+- 👤 **Fisherman profile & preferences** — `/fisherman.profile` (previously a dead link) with editable name/phone/vessel/license, preferred location (GPS-fillable), language, temperature unit, wind unit, and notification preferences. Backend enforces ownership (only the caller's own row is ever touched).
+- 🔬 **Researcher data workspace** — Data Explorer (lists 4 real, queryable datasets with live record counts + coverage), Dataset Details (paginated preview + per-dataset charts + "Save as report"), GIS Map View (real OSM tiles overlaying sea-condition coords, fishing spots, alert coords — no PII), and Research Reports (saved snapshots with JSON view + delete). No fabricated scientific data — empty datasets show actionable empty states.
+- 📊 **Admin API monitoring** — `/admin.api-monitoring` with an overall health banner (healthy/degraded/unavailable, communicated via icon + text + color), per-service table (calls, errors, last status, p95 latency), a call-volume chart, and a recent-calls log. Secrets are never shown.
+- 🛡️ **Last-admin protection** — the backend refuses to demote or deactivate the final active administrator, preventing accidental lockout.
+- ♿ **Accessibility hardening** — alert severity and lifecycle status are always conveyed via icon + text + color (never color alone), with `aria-label`s on icon-only buttons and `sr-only` text where needed.
+
 ---
 
 ## Tech stack
@@ -168,7 +178,22 @@ Manual end-to-end scenarios (all verified with the Agent Browser):
 19. **Logout** — session deleted server-side, cookie cleared, returns to landing.
 20. **Session persistence** — httpOnly cookie rehydrates on reload; stale/expired sessions clear the local user and return to landing.
 
+### Phase 2 scenarios (verified)
+
+21. **Alert lifecycle** — an ACTIVE alert is Acknowledged (`POST /api/alerts/:id/acknowledge`), then Resolved (`POST /api/alerts/:id/resolve`); the status badge updates in the UI and persists in the DB. ACTIVE alerts past `endTime` auto-expire on list.
+22. **Alert metric context** — the alert detail dialog shows Metric, Actual value, Threshold crossed, Source.
+23. **Notification center** — `/fisherman.notifications` lists notifications with severity + category + related-alert link; mark-read, mark-all-read, and delete all work; the header badge reflects real backend unread count.
+24. **Fisherman profile** — `/fisherman.profile` edits name/phone/vessel/license + preferred location (GPS) + preferences; backend ownership-enforced (a fisher can only patch their own row).
+25. **Researcher data explorer** — 4 real datasets listed with live record counts + geographic coverage; "Explore dataset" opens a paginated preview + per-dataset chart + "Save as report".
+26. **Researcher GIS** — real OSM tiles overlay sea-condition coords + fishing spots + alert coords; source filters re-fetch; no fisherman PII.
+27. **Researcher reports** — saved snapshots persist; JSON view + delete work.
+28. **Admin API monitoring** — overall health banner + per-service table + call-volume chart + recent-calls log; secrets never shown.
+29. **Last-admin protection** — demoting or deactivating the final active admin → `400` with a clear message.
+30. **RBAC security** — a fisherman's session is rejected (`401`/`403`) by every `/api/admin/*` and `/api/researcher/*` route; a fisher can only read/patch their own profile and own saved locations/analyses.
+
 Code quality: `bun run lint` → 0 errors, 0 warnings.
+
+> **Note on Prisma client regeneration:** the `WeatherAlert`, `Notification` and `UserProfile` models gained new columns in Phase 2. After `bun run db:push` (which regenerates the client), **restart the dev server** so Turbopack picks up the regenerated `@prisma/client` — otherwise the running process holds a stale client and lifecycle/profile writes will 500.
 
 ---
 

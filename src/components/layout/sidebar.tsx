@@ -14,6 +14,10 @@ import {
   Database,
   FlaskConical,
   FileBarChart,
+  Bell,
+  Search,
+  Globe2,
+  Activity,
   type LucideIcon,
 } from "lucide-react";
 import { useAppStore, type ViewId } from "@/lib/store";
@@ -32,15 +36,19 @@ export const FISHERMAN_NAV: NavItem[] = [
   { id: "fisherman.safety-alerts", label: "Safety & Alert System", icon: ShieldAlert },
   { id: "fisherman.ai-fish-analysis", label: "AI Fish Analysis", icon: Sparkles },
   { id: "fisherman.location-navigation", label: "Location & Navigation", icon: MapPin },
+  { id: "fisherman.notifications", label: "Notifications", icon: Bell },
   { id: "fisherman.catch-logging" as ViewId, label: "Catch Logging", icon: Fish, soon: true },
   { id: "fisherman.sos-emergency" as ViewId, label: "SOS & Emergency", icon: LifeBuoy, soon: true },
-  { id: "fisherman.settings", label: "Settings", icon: Settings },
+  { id: "fisherman.profile", label: "Profile & Settings", icon: Settings },
 ];
 
 export const RESEARCHER_NAV: NavItem[] = [
   { id: "researcher.dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "researcher.data-explorer", label: "Data Explorer", icon: Search },
+  { id: "researcher.gis", label: "GIS Map View", icon: Globe2 },
+  { id: "researcher.reports", label: "Research Reports", icon: FileBarChart },
   { id: "researcher.sea-conditions", label: "Sea Conditions", icon: Waves },
-  { id: "researcher.fishing-data", label: "Fishing Data & Reports", icon: FileBarChart },
+  { id: "researcher.fishing-data", label: "Analytics", icon: Activity },
 ];
 
 export const ADMIN_NAV: NavItem[] = [
@@ -50,6 +58,7 @@ export const ADMIN_NAV: NavItem[] = [
   { id: "admin.alerts", label: "Alerts", icon: ShieldAlert },
   { id: "admin.fish-analyses", label: "Fish Analysis Records", icon: Sparkles },
   { id: "admin.locations", label: "Fishing Locations", icon: MapPin },
+  { id: "admin.api-monitoring", label: "API Monitoring", icon: Activity },
   { id: "admin.settings", label: "Settings & API", icon: Database },
 ];
 

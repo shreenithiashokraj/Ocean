@@ -185,10 +185,16 @@ export async function POST(req: Request) {
       const type = METRIC_TO_TYPE[t.metric] ?? ("SEA_STATE" as AlertType);
       const label = METRIC_LABEL[t.metric] ?? t.metric;
       const valStr = formatValue(t.metric, raw);
+      // The threshold level that was crossed (caution/high/critical) — surfaced
+      // in the alert so the user sees the actual rule that fired.
+      const crossed =
+        severity === "CRITICAL" ? t.critical
+        : severity === "HIGH" ? t.high
+        : t.caution;
       const title = `${severity} ${label} alert`;
       const description =
         `${label} is currently ${valStr} ${t.unit}, which crosses the ${severity.toLowerCase()} ` +
-        `threshold (caution ${t.caution}, high ${t.high}, critical ${t.critical} ${t.unit}).` +
+        `threshold (${t.caution}/${t.high}/${t.critical} ${t.unit} = caution/high/critical).` +
         (isDemo ? " (Demo data — offline mode.)" : "");
 
       // ── De-dupe: skip if an unread alert of same type/severity/userId
@@ -220,27 +226,32 @@ export async function POST(req: Request) {
           startTime: now,
           endTime,
           source: "Fisherman Module Alert Engine",
+          // Phase 2: lifecycle + metric context
+          status: "ACTIVE",
+          metric: t.metric,
+          actualValue: valStr,
+          thresholdValue: formatValue(t.metric, crossed),
         },
       });
 
       created++;
 
-      // ── Create notification(s) ────────────────────────────
+      // ── Create notification(s) — linked to the alert, with severity ────
       const notifType =
         severity === "CRITICAL" || severity === "HIGH" ? "alert" : "warning";
+      const notifPayload = (uid: string) => ({
+        userId: uid,
+        title: alert.title,
+        message: alert.description,
+        type: notifType,
+        severity,
+        category: "alert",
+        alertId: alert.id,
+      });
       if (targetUserId) {
         await db.notification
-          .create({
-            data: {
-              userId: targetUserId,
-              title: alert.title,
-              message: alert.description,
-              type: notifType,
-            },
-          })
-          .catch(() => {
-            /* notifications are best-effort */
-          });
+          .create({ data: notifPayload(targetUserId) })
+          .catch(() => { /* best-effort */ });
       } else {
         // Broadcast: notify every active user
         const users = await db.user.findMany({
@@ -249,17 +260,8 @@ export async function POST(req: Request) {
         });
         for (const u of users) {
           await db.notification
-            .create({
-              data: {
-                userId: u.id,
-                title: alert.title,
-                message: alert.description,
-                type: notifType,
-              },
-            })
-            .catch(() => {
-              /* best-effort */
-            });
+            .create({ data: notifPayload(u.id) })
+            .catch(() => { /* best-effort */ });
         }
       }
     }
