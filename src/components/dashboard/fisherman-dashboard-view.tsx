@@ -5,9 +5,9 @@
  *
  * The fisherman's personal home view. Layout:
  *   - Welcome banner (name + role badge + current date).
- *   - Quick-access 2×3 grid: 4 working module cards (Sea Conditions, Safety
- *     Alerts, AI Fish Analysis, Location & Navigation) + 2 disabled
- *     "Coming Soon" cards (Catch Logging, SOS).
+ *   - Quick-access grid: 6 working module cards (Sea Conditions, Safety
+ *     Alerts, AI Fish Analysis, Location & Navigation, Catch Logging,
+ *     SOS & Emergency).
  *   - Three live cards populated on mount via Promise.all:
  *       · Current conditions (geolocation → Chennai fallback →
  *         api.getSeaConditions)
@@ -25,12 +25,11 @@ import {
   ArrowRight,
   Calendar,
   ChevronRight,
-  ClipboardList,
   Clock,
   Compass,
   Fish,
+  LifeBuoy,
   MapPin,
-  Radio,
   ShieldAlert,
   Thermometer,
   Waves,
@@ -147,22 +146,19 @@ const MODULE_CARDS: ModuleCard[] = [
     icon: MapPin,
     accent: "from-purple-500/25 to-purple-500/5 text-purple-400",
   },
-];
-
-const COMING_SOON_CARDS: {
-  title: string;
-  desc: string;
-  icon: React.ComponentType<{ className?: string }>;
-}[] = [
   {
+    view: "fisherman.catch-logging",
     title: "Catch Logging",
     desc: "Track your daily catch & bycatch.",
-    icon: ClipboardList,
+    icon: Fish,
+    accent: "from-cyan-500/25 to-cyan-500/5 text-cyan-400",
   },
   {
-    title: "SOS",
-    desc: "One-tap distress signal to the coast guard.",
-    icon: Radio,
+    view: "fisherman.sos-emergency",
+    title: "SOS & Emergency",
+    desc: "One-tap distress signal (demo record).",
+    icon: LifeBuoy,
+    accent: "from-rose-500/25 to-rose-500/5 text-rose-400",
   },
 ];
 
@@ -374,38 +370,6 @@ export function FishermanDashboardView() {
           );
         })}
 
-        {/* Coming-soon disabled cards */}
-        {COMING_SOON_CARDS.map((c) => {
-          const Icon = c.icon;
-          return (
-            <Card
-              key={c.title}
-              className="glass-card relative overflow-hidden border-dashed opacity-70"
-            >
-              <div className="flex items-start gap-3 p-5">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-muted/40 text-muted-foreground">
-                  <Icon className="size-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-semibold tracking-tight text-muted-foreground">
-                      {c.title}
-                    </h3>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] text-muted-foreground"
-                    >
-                      Coming Soon
-                    </Badge>
-                  </div>
-                  <p className="mt-0.5 text-sm text-muted-foreground/80">
-                    {c.desc}
-                  </p>
-                </div>
-              </div>
-            </Card>
-          );
-        })}
       </section>
 
       {/* ── Live cards row ────────────────────────────────────────────────── */}

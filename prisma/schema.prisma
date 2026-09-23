@@ -33,6 +33,8 @@ model User {
   passwordResets PasswordReset[]
   apiLogs        ApiLog[]
   researchReports ResearchReport[]
+  catchRecords   CatchRecord[]
+  sosAlerts      SosAlert[]
 }
 
 model UserProfile {
@@ -256,4 +258,163 @@ model ResearchReport {
 
   @@index([userId])
   @@index([datasetKey])
+}
+
+// ─── Phase 3: Catch logging (user-owned) ────────────────────────────────────
+model CatchRecord {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date            DateTime // calendar date of the catch (stored at UTC midnight)
+  time            String?  // HH:mm local time of the catch, when provided
+  species         String
+  quantity        Float
+  unit            String   @default("kg") // kg | count
+  averageSize     Float?   // average size of the fish
+  averageSizeUnit String   @default("cm") // cm | in
+  estimatedWeight Float?   // optional, kg
+  catchType       String   @default("CATCH") // CATCH | BYCATCH
+  bycatchSpecies  String?  // incidental species detail when catchType is BYCATCH
+  location        String
+  notes           String?
+  photoDataUrl    String?  // optional catch photo (data URL, same pattern as FishAnalysis.imageDataUrl)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([date])
+}
+
+// ─── Phase 3: SOS / emergency distress signals (user-owned) ─────────────────
+model SosAlert {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  latitude     Float?    // nullable: browser GPS may be denied/unavailable
+  longitude    Float?    // nullable: browser GPS may be denied/unavailable
+  gpsAvailable Boolean   @default(false)
+  accuracyM    Float?    // GPS accuracy in metres, when reported by the browser
+  locationLabel String?  // human label for the position, when known
+  timestamp    DateTime  @default(now())
+  status       String    @default("ACTIVE") // ACTIVE | RESOLVED | CANCELLED
+  message      String?
+  resolvedAt   DateTime?
+  resolvedBy   String?   // user id of the admin/responder who resolved the event
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ─── Researcher: uploaded research datasets ─────────────────────────────────
+// These models are ADDITIVE — they do not modify any existing Fisherman Module
+// table. Uploaded researcher data lives entirely in its own relations and is
+// guarded by RESEARCHER/ADMIN role checks at every API route.
+
+model ResearchDataset {
+  id           String            @id @default(cuid())
+  userId       String            // owner (researcher or admin)
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  /** Oceanographic | Fisheries | Biodiversity | Taxonomy | eDNA | Otolith | Other */
+  domain       String
+  dataType     String?           // e.g. "Occurrence", "Sample", "Environmental"
+  source       String?           // provenance / source label
+  organization String?           // institution / creator organization
+  contact      String?           // contact email / name
+  license      String?
+  keywords     String?           // comma-separated
+  methodology  String?
+  /** FAIR metadata timestamps */
+  dateCreated   DateTime?
+  dateUpdated   DateTime?
+  temporalStart DateTime?         // temporal coverage start
+  temporalEnd   DateTime?         // temporal coverage end
+  /** Geographic coverage bounds */
+  minLat       Float?
+  maxLat       Float?
+  minLng       Float?
+  maxLng       Float?
+  recordCount  Int               @default(0)
+  /** Quality score 0..1 (computed at validation time, nullable when unassessed) */
+  qualityScore Float?
+  status       String            @default("draft") // draft | active | archived | rejected
+  isPublic     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  records      DatasetRecord[]
+  validations  DatasetValidationRun[]
+  documents    ResearchDocument[]
+
+  @@index([userId])
+  @@index([domain])
+  @@index([status])
+  @@index([name])
+}
+
+/**
+ * A single data row from an uploaded research dataset. The `data` column holds
+ * the original record as a JSON string (same pattern as SeaCondition.payload),
+ * so any scientific schema can be stored without a rigid table per domain.
+ * Indexed columns (species, occurredAt, latitude, longitude) power the
+ * domain-specific views and the unified explorer.
+ */
+model DatasetRecord {
+  id         String           @id @default(cuid())
+  datasetId  String
+  dataset    ResearchDataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  data       String           // JSON string of the full record
+  latitude   Float?
+  longitude  Float?
+  species    String?
+  taxon      String?
+  occurredAt DateTime?        // collection / observation date
+  createdAt  DateTime         @default(now())
+
+  @@index([datasetId])
+  @@index([species])
+  @@index([occurredAt])
+  @@index([latitude, longitude])
+}
+
+/** Validation report snapshot attached to a dataset after an upload run. */
+model DatasetValidationRun {
+  id            String           @id @default(cuid())
+  datasetId     String
+  dataset       ResearchDataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  totalRecords  Int
+  validRecords  Int
+  warnings      Int              @default(0)
+  errors        Int              @default(0)
+  report        String           // JSON string: detailed per-row validation findings
+  createdAt     DateTime         @default(now())
+
+  @@index([datasetId])
+  @@index([createdAt])
+}
+
+/** Uploaded research documents / files (metadata only; binary stored on disk). */
+model ResearchDocument {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  filename    String
+  contentType String
+  fileSize    Int               // bytes
+  storagePath String            // server-side file path
+  domain      String?           // optional domain association
+  datasetId   String?           // optional related dataset
+  dataset     ResearchDataset?  @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  tags        String?           // JSON string of tag array
+  license     String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([domain])
 }

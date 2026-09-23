@@ -29,6 +29,8 @@ export type ViewId =
   | "fisherman.ai-fish-analysis.history"
   | "fisherman.location-navigation"
   | "fisherman.notifications"
+  | "fisherman.catch-logging"
+  | "fisherman.sos-emergency"
   | "fisherman.profile"
   | "fisherman.settings"
   // researcher
@@ -123,6 +125,8 @@ export function roleCanAccess(view: ViewId, role: Role | undefined): boolean {
     "fisherman.ai-fish-analysis.history",
     "fisherman.location-navigation",
     "fisherman.notifications",
+    "fisherman.catch-logging",
+    "fisherman.sos-emergency",
     "fisherman.profile",
     "fisherman.settings",
   ].includes(view);

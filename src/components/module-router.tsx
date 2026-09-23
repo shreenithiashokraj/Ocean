@@ -11,6 +11,8 @@ import {
   ProfileView,
   NotificationsView,
   FishermanDashboardView,
+  CatchLoggingView,
+  SosEmergencyView,
   // Researcher
   ResearcherDashboardView,
   ResearcherSeaConditionsView,
@@ -44,6 +46,8 @@ function ViewRenderer({ view }: { view: ViewId }) {
     case "fisherman.ai-fish-analysis": return <FishAnalysisView />;
     case "fisherman.location-navigation": return <LocationNavigationView />;
     case "fisherman.notifications": return <NotificationsView />;
+    case "fisherman.catch-logging": return <CatchLoggingView />;
+    case "fisherman.sos-emergency": return <SosEmergencyView />;
     case "fisherman.profile": return <ProfileView />;
     // Researcher
     case "researcher.dashboard": return <ResearcherDashboardView />;

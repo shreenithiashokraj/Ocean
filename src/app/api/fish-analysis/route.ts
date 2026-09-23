@@ -3,6 +3,12 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logApiCall } from "@/lib/weather";
 import type { FishAnalysisResult } from "@/lib/types";
+import {
+  getFishVisionModel,
+  isTransientVlmError,
+  loadZaiServerConfig,
+  redactApiKey,
+} from "@/lib/zai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,6 +211,29 @@ export async function POST(req: Request) {
   }
 
   // ─── Call the Vision Language Model ─────────────────────────────────────
+  // Server-side only: resolve the Z.AI key from env vars or .z-ai-config.
+  // The key is never sent to, or readable from, the browser.
+  const { config: zaiConfig, error: configError } = await loadZaiServerConfig();
+  if (!zaiConfig) {
+    await logApiCall({
+      userId: session.sub,
+      service: "fish-analysis",
+      endpoint: "/api/fish-analysis",
+      method: "POST",
+      status: 503,
+      durationMs: Date.now() - startedAt,
+      message: "VLM skipped: no Z.AI API key configured",
+    });
+    return NextResponse.json(
+      {
+        error:
+          configError ??
+          "AI analysis is not configured. Please set up your Z.AI API key in the .z-ai-config file.",
+      },
+      { status: 503 },
+    );
+  }
+
   let analysis: FishAnalysisResult;
   let rawForDb: string;
   let vlmStatus = 200;
@@ -212,11 +241,33 @@ export async function POST(req: Request) {
 
   try {
     // Dynamically import the SDK so it can never be bundled into client code.
+    // The SDK's static create() only reads .z-ai-config files, so we pass the
+    // resolved credentials explicitly to support env-var configuration too.
     const ZAIModule = await import("z-ai-web-dev-sdk");
     const ZAI = (ZAIModule as { default?: unknown }).default ?? ZAIModule;
-    const zai = await (ZAI as { create: () => Promise<VLMClient> }).create();
+    const ZAIClass = ZAI as {
+      create: () => Promise<VLMClient>;
+      prototype?: unknown;
+    };
+    let zai: VLMClient;
+    try {
+      // Prefer explicit construction with our resolved config.
+      zai = new (
+        ZAIClass as unknown as new (cfg: {
+          baseUrl: string;
+          apiKey: string;
+        }) => VLMClient
+      )({ baseUrl: zaiConfig.baseUrl, apiKey: zaiConfig.apiKey });
+    } catch {
+      zai = await ZAIClass.create();
+    }
 
-    const completion = await zai.chat.completions.createVision({
+    const visionRequest = {
+      // Real, documented Z.AI endpoint: POST {baseUrl}/chat/completions with
+      // multimodal content (text + image_url). NOTE: the SDK's separate
+      // `createVision` helper posts to {baseUrl}/chat/completions/vision,
+      // which does NOT exist on api.z.ai (returns 404), so it is not used.
+      model: getFishVisionModel(),
       messages: [
         {
           role: "user",
@@ -227,7 +278,26 @@ export async function POST(req: Request) {
         },
       ],
       thinking: { type: "disabled" },
-    } as Parameters<typeof zai.chat.completions.createVision>[0]);
+    } as Parameters<typeof zai.chat.completions.create>[0];
+
+    // The free vision model occasionally answers with a transient capacity
+    // error (Z.AI code 1305 "service temporarily overloaded"); retry briefly.
+    const MAX_ATTEMPTS = 3;
+    let completion: Awaited<ReturnType<typeof zai.chat.completions.create>> | null = null;
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        completion = await zai.chat.completions.create(visionRequest);
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        const m = e instanceof Error ? e.message : String(e);
+        if (attempt >= MAX_ATTEMPTS || !isTransientVlmError(m)) throw e;
+        await new Promise((r) => setTimeout(r, 1200 * attempt));
+      }
+    }
+    if (!completion) throw lastErr ?? new Error("Z.AI vision request failed.");
 
     const rawContent = contentToString(completion.choices?.[0]?.message?.content);
     rawForDb = JSON.stringify({
@@ -259,8 +329,47 @@ export async function POST(req: Request) {
       vlmMessage = "non-JSON AI response — fallback used";
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    rawForDb = JSON.stringify({ ok: false, error: msg });
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = redactApiKey(rawMsg, zaiConfig);
+    rawForDb = JSON.stringify({ ok: false, error: safeMsg });
+    const lowered = safeMsg.toLowerCase();
+    const authFailure =
+      lowered.includes("401") ||
+      lowered.includes("403") ||
+      lowered.includes("unauthorized") ||
+      lowered.includes("invalid api key") ||
+      lowered.includes("invalid_api_key") ||
+      lowered.includes("incorrect api key");
+    // Z.AI billing/resource-package errors. Matched on the specific billing
+    // signals (code 1113 / balance / resource package), NOT on a bare "429",
+    // because Z.AI also returns 429 for transient capacity errors (code 1305).
+    const quotaFailure =
+      lowered.includes("1113") ||
+      lowered.includes("insufficient balance") ||
+      lowered.includes("insufficient_account_balance") ||
+      lowered.includes("no resource package") ||
+      lowered.includes("resource package") ||
+      lowered.includes("insufficient quota") ||
+      lowered.includes("recharge") ||
+      lowered.includes("no permission to use");
+    let userMessage: string;
+    if (authFailure) {
+      userMessage =
+        "AI analysis failed: the Z.AI API key was rejected (invalid key). " +
+        "Update Z_AI_API_KEY (or .z-ai-config) with a valid key from " +
+        "https://z.ai/manage-apikey/apikey-list and restart the server.";
+    } else if (quotaFailure) {
+      userMessage =
+        "Z.AI vision service is unavailable because this account does not have " +
+        "sufficient balance or an active vision resource package. Please " +
+        "recharge/activate the Z.AI vision service and try again.";
+    } else if (isTransientVlmError(safeMsg)) {
+      userMessage =
+        "AI analysis is temporarily unavailable: the Z.AI vision service is " +
+        "busy right now. Please try again in a few seconds.";
+    } else {
+      userMessage = `AI analysis failed: ${safeMsg}`;
+    }
     analysis = {
       species: null,
       confidence: null,
@@ -268,7 +377,7 @@ export async function POST(req: Request) {
       sizeRange: null,
       weightRange: null,
       characteristics: null,
-      notes: `AI analysis failed: ${msg}`,
+      notes: userMessage,
       qualityWarning: null,
       market: null,
     };
@@ -279,7 +388,7 @@ export async function POST(req: Request) {
       method: "POST",
       status: 502,
       durationMs: Date.now() - startedAt,
-      message: `VLM error: ${msg.slice(0, 200)}`,
+      message: `VLM error: ${safeMsg.slice(0, 200)}`,
     });
     // Persist the failed attempt so the fisherman sees a record of it.
     try {
@@ -307,7 +416,7 @@ export async function POST(req: Request) {
       /* best-effort */
     }
     return NextResponse.json(
-      { error: `AI analysis failed: ${msg}`, analysis },
+      { error: userMessage, analysis },
       { status: 502 },
     );
   }
@@ -446,20 +555,25 @@ export async function GET() {
   return NextResponse.json({ analyses });
 }
 
-// Minimal structural type for the SDK vision client (avoids bundling the SDK
-// types into the route module surface).
+// Minimal structural type for the SDK chat client. `create` posts to the real
+// Z.AI endpoint ({baseUrl}/chat/completions) and accepts multimodal content
+// (text + image_url), which is what the vision analysis needs.
 interface VLMClient {
   chat: {
     completions: {
-      createVision: (input: {
+      create: (input: {
+        /** Vision-capable Z.AI model id (e.g. glm-4.6v). */
+        model?: string;
         messages: {
           role: string;
-          content: Array<
-            | { type: "text"; text: string }
-            | { type: "image_url"; image_url: { url: string } }
-          >;
+          content:
+            | string
+            | Array<
+                | { type: "text"; text: string }
+                | { type: "image_url"; image_url: { url: string } }
+              >;
         }[];
-        thinking: { type: "disabled" };
+        thinking?: { type: "disabled" | "enabled" };
       }) => Promise<{
         choices?: {
           finish_reason?: string;

@@ -94,3 +94,68 @@ export interface NotificationItem {
   isRead: boolean;
   createdAt: string;
 }
+
+/** Phase 3: catch-logging record (mirrors the /api/catches DTO). */
+export interface CatchRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  time: string | null; // HH:mm
+  species: string;
+  quantity: number;
+  unit: string; // kg | count
+  averageSize: number | null;
+  averageSizeUnit: string; // cm | in
+  estimatedWeight: number | null; // kg
+  catchType: string; // CATCH | BYCATCH
+  bycatch: boolean;
+  bycatchSpecies: string | null;
+  location: string;
+  notes: string;
+  photoDataUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatchRecordInput {
+  date: string;
+  time?: string | null;
+  species: string;
+  quantity: number;
+  unit: string;
+  averageSize?: number | null;
+  averageSizeUnit?: string;
+  estimatedWeight?: number | null;
+  bycatch?: boolean;
+  bycatchSpecies?: string | null;
+  location: string;
+  notes?: string | null;
+  photoDataUrl?: string | null;
+}
+
+/** Phase 3: SOS / emergency event (mirrors the /api/sos DTO). */
+export interface SosEvent {
+  id: string;
+  latitude: number | null;
+  longitude: number | null;
+  gpsAvailable: boolean;
+  accuracyM: number | null;
+  locationLabel: string | null;
+  locationText: string;
+  timestamp: string;
+  status: string; // ACTIVE | RESOLVED | CANCELLED
+  message: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  fishermanName: string | null;
+  contactPhone: string | null;
+  createdAt: string;
+}
+
+export interface SosEventInput {
+  latitude?: number | null;
+  longitude?: number | null;
+  gpsAvailable: boolean;
+  accuracyM?: number | null;
+  locationLabel?: string | null;
+  message?: string | null;
+}

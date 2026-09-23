@@ -47,6 +47,61 @@ function safeJson(text: string): unknown {
   }
 }
 
+export interface MarineRecordDetail {
+  label: string;
+  value: string;
+}
+
+/** One normalized record returned by the Unified Data Explorer. */
+export interface MarineRecordRow {
+  id: string;
+  datasetKey: string;
+  datasetName: string;
+  domainKey: string | null;
+  domainLabel: string;
+  title: string;
+  taxon: string | null;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  occurredAt: string | null;
+  source: string;
+  status: string;
+  details: MarineRecordDetail[];
+}
+
+export interface ExplorerDomainInfo {
+  key: string;
+  label: string;
+  datasetKeys: string[];
+  note: string | null;
+  hasSource: boolean;
+  recordCount: number;
+}
+
+export interface MarineRecordSearchResult {
+  records: MarineRecordRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  truncated: boolean;
+  domains: ExplorerDomainInfo[];
+  sources: string[];
+}
+
+export interface MarineRecordQuery {
+  domain?: string;
+  dataset?: string;
+  search?: string;
+  source?: string;
+  location?: string;
+  taxon?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
 export const api = {
   // ── Auth ───────────────────────────────────────────────
   signIn: (email: string, password: string) =>
@@ -215,6 +270,45 @@ export const api = {
       method: "POST",
     }),
 
+  // ── Phase 3: catch logging ────────────────────────────────────────────
+  listCatches: (params: { from?: string; to?: string; species?: string; location?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.species) qs.set("species", params.species);
+    if (params.location) qs.set("location", params.location);
+    const q = qs.toString();
+    return request<{ catches: import("@/lib/types").CatchRecord[] }>(
+      `/api/catches${q ? `?${q}` : ""}`
+    );
+  },
+  createCatch: (input: import("@/lib/types").CatchRecordInput) =>
+    request<{ catch: import("@/lib/types").CatchRecord }>("/api/catches", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateCatch: (id: string, input: import("@/lib/types").CatchRecordInput) =>
+    request<{ catch: import("@/lib/types").CatchRecord }>(`/api/catches/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  deleteCatch: (id: string) =>
+    request<{ ok: true }>(`/api/catches/${id}`, { method: "DELETE" }),
+
+  // ── Phase 3: SOS / emergency ──────────────────────────────────────────
+  listSosEvents: () =>
+    request<{ events: import("@/lib/types").SosEvent[] }>("/api/sos"),
+  createSosEvent: (input: import("@/lib/types").SosEventInput) =>
+    request<{ event: import("@/lib/types").SosEvent }>("/api/sos", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateSosStatus: (id: string, status: "RESOLVED" | "CANCELLED") =>
+    request<{ event: import("@/lib/types").SosEvent }>(`/api/sos/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+
   // ── Phase 2: researcher datasets + GIS + reports ─────────────────────
   listResearcherDatasets: () =>
     request<{
@@ -254,6 +348,18 @@ export const api = {
       recordCount: number;
       coverage: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null;
     }>(`/api/researcher/datasets/${encodeURIComponent(key)}${q ? `?${q}` : ""}`);
+  },
+  /** Unified Data Explorer — cross-domain marine record search. */
+  searchMarineRecords: (params: MarineRecordQuery = {}) => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === "") continue;
+      qs.set(key, String(value));
+    }
+    const q = qs.toString();
+    return request<MarineRecordSearchResult>(
+      `/api/researcher/explorer${q ? `?${q}` : ""}`
+    );
   },
   getResearcherGis: (sources?: string[]) =>
     request<{

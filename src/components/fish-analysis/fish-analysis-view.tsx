@@ -170,7 +170,12 @@ function FishAnalysisInner() {
   }, []);
 
   useEffect(() => {
-    loadHistory();
+    // Deferred so the effect body itself performs no synchronous state update
+    // (react-hooks/set-state-in-effect); behavior is unchanged.
+    const timer = window.setTimeout(() => {
+      void loadHistory();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadHistory]);
 
   // ─── Image selection handlers ────────────────────────────────────────────

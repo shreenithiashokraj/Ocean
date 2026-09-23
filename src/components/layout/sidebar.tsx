@@ -12,6 +12,8 @@ import {
   Settings,
   Users,
   Database,
+  Dna,
+  FileDown,
   FlaskConical,
   FileBarChart,
   Bell,
@@ -37,8 +39,8 @@ export const FISHERMAN_NAV: NavItem[] = [
   { id: "fisherman.ai-fish-analysis", label: "AI Fish Analysis", icon: Sparkles },
   { id: "fisherman.location-navigation", label: "Location & Navigation", icon: MapPin },
   { id: "fisherman.notifications", label: "Notifications", icon: Bell },
-  { id: "fisherman.catch-logging" as ViewId, label: "Catch Logging", icon: Fish, soon: true },
-  { id: "fisherman.sos-emergency" as ViewId, label: "SOS & Emergency", icon: LifeBuoy, soon: true },
+  { id: "fisherman.catch-logging", label: "Catch Logging", icon: Fish },
+  { id: "fisherman.sos-emergency", label: "SOS & Emergency", icon: LifeBuoy },
   { id: "fisherman.profile", label: "Profile & Settings", icon: Settings },
 ];
 
@@ -49,6 +51,12 @@ export const RESEARCHER_NAV: NavItem[] = [
   { id: "researcher.reports", label: "Research Reports", icon: FileBarChart },
   { id: "researcher.sea-conditions", label: "Sea Conditions", icon: Waves },
   { id: "researcher.fishing-data", label: "Analytics", icon: Activity },
+  // Roadmap placeholders for the research workbench — same "Soon" convention
+  // the fisherman nav already uses (disabled, never routed).
+  { id: "researcher.species-biodiversity" as ViewId, label: "Species & Biodiversity", icon: Fish, soon: true },
+  { id: "researcher.edna-taxonomy" as ViewId, label: "eDNA & Taxonomy", icon: Dna, soon: true },
+  { id: "researcher.ai-assistant" as ViewId, label: "AI Research Assistant", icon: FlaskConical, soon: true },
+  { id: "researcher.exports" as ViewId, label: "Exports", icon: FileDown, soon: true },
 ];
 
 export const ADMIN_NAV: NavItem[] = [

@@ -13,6 +13,10 @@ export { LocationNavigationView } from "@/components/location/location-navigatio
 export { ProfileView } from "@/components/profile/profile-view";
 export { NotificationsView } from "@/components/notifications/notifications-view";
 
+// ── Phase 3: fisherman catch logging + SOS ─────────────────────────────────
+export { CatchLoggingView } from "@/components/catch-logging/catch-logging-view";
+export { SosEmergencyView } from "@/components/sos-emergency/sos-emergency-view";
+
 // ── Dashboards ────────────────────────────────────────────────────────────
 export { FishermanDashboardView } from "@/components/dashboard/fisherman-dashboard-view";
 
