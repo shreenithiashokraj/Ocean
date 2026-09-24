@@ -16,6 +16,11 @@ export const PORTAL_ACCESS: Record<string, Role[]> = {
   "researcher.dataset-details": ["RESEARCHER", "ADMIN"],
   "researcher.gis": ["RESEARCHER", "ADMIN"],
   "researcher.reports": ["RESEARCHER", "ADMIN"],
+  // Marine Platform researcher workbench (additive — RESEARCHER/ADMIN only)
+  "researcher.species-biodiversity": ["RESEARCHER", "ADMIN"],
+  "researcher.edna-taxonomy": ["RESEARCHER", "ADMIN"],
+  "researcher.ai-assistant": ["RESEARCHER", "ADMIN"],
+  "researcher.exports": ["RESEARCHER", "ADMIN"],
   "fisherman.dashboard": ["FISHERMAN", "ADMIN"],
   "fisherman.sea-conditions": ["FISHERMAN", "ADMIN"],
   "fisherman.safety-alerts": ["FISHERMAN", "ADMIN"],

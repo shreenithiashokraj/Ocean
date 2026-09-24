@@ -40,3 +40,9 @@ export { AdminLocationsView } from "@/components/admin/admin-locations-view";
 export { AdminSettingsView } from "@/components/admin/admin-settings-view";
 // Phase 2
 export { ApiMonitoringView } from "@/components/admin/api-monitoring-view";
+
+// ── Marine Platform researcher workbench (additive) ───────────────────────────
+export { SpeciesBiodiversityView } from "@/components/marine/species-biodiversity-view";
+export { EdnaTaxonomyView } from "@/components/marine/edna-taxonomy-view";
+export { AiAssistantView } from "@/components/marine/ai-assistant-view";
+export { ExportsView } from "@/components/marine/exports-view";

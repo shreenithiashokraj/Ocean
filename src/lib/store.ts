@@ -41,6 +41,11 @@ export type ViewId =
   | "researcher.dataset-details"
   | "researcher.gis"
   | "researcher.reports"
+  // marine platform (researcher workbench)
+  | "researcher.species-biodiversity"
+  | "researcher.edna-taxonomy"
+  | "researcher.ai-assistant"
+  | "researcher.exports"
   // admin
   | "admin.dashboard"
   | "admin.users"
@@ -115,6 +120,11 @@ export function roleCanAccess(view: ViewId, role: Role | undefined): boolean {
       "researcher.dataset-details",
       "researcher.gis",
       "researcher.reports",
+      // marine platform views (additive)
+      "researcher.species-biodiversity",
+      "researcher.edna-taxonomy",
+      "researcher.ai-assistant",
+      "researcher.exports",
     ].includes(view);
   // FISHERMAN
   return [

@@ -21,6 +21,11 @@ import {
   ResearcherDatasetDetailsView,
   ResearcherGisView,
   ResearcherReportsView,
+  // Marine Platform researcher workbench (additive)
+  SpeciesBiodiversityView,
+  EdnaTaxonomyView,
+  AiAssistantView,
+  ExportsView,
   // Admin
   AdminDashboardView,
   AdminUsersView,
@@ -57,6 +62,11 @@ function ViewRenderer({ view }: { view: ViewId }) {
     case "researcher.dataset-details": return <ResearcherDatasetDetailsView />;
     case "researcher.gis": return <ResearcherGisView />;
     case "researcher.reports": return <ResearcherReportsView />;
+    // Marine Platform researcher workbench (additive)
+    case "researcher.species-biodiversity": return <SpeciesBiodiversityView />;
+    case "researcher.edna-taxonomy": return <EdnaTaxonomyView />;
+    case "researcher.ai-assistant": return <AiAssistantView />;
+    case "researcher.exports": return <ExportsView />;
     // Admin
     case "admin.dashboard": return <AdminDashboardView />;
     case "admin.users": return <AdminUsersView />;

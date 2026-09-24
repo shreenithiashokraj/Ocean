@@ -53,10 +53,10 @@ export const RESEARCHER_NAV: NavItem[] = [
   { id: "researcher.fishing-data", label: "Analytics", icon: Activity },
   // Roadmap placeholders for the research workbench — same "Soon" convention
   // the fisherman nav already uses (disabled, never routed).
-  { id: "researcher.species-biodiversity" as ViewId, label: "Species & Biodiversity", icon: Fish, soon: true },
-  { id: "researcher.edna-taxonomy" as ViewId, label: "eDNA & Taxonomy", icon: Dna, soon: true },
-  { id: "researcher.ai-assistant" as ViewId, label: "AI Research Assistant", icon: FlaskConical, soon: true },
-  { id: "researcher.exports" as ViewId, label: "Exports", icon: FileDown, soon: true },
+  { id: "researcher.species-biodiversity" as ViewId, label: "Species & Biodiversity", icon: Fish },
+  { id: "researcher.edna-taxonomy" as ViewId, label: "eDNA & Taxonomy", icon: Dna },
+  { id: "researcher.ai-assistant" as ViewId, label: "AI Research Assistant", icon: FlaskConical },
+  { id: "researcher.exports" as ViewId, label: "Exports", icon: FileDown },
 ];
 
 export const ADMIN_NAV: NavItem[] = [

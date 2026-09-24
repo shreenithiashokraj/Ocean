@@ -35,6 +35,11 @@ model User {
   researchReports ResearchReport[]
   catchRecords   CatchRecord[]
   sosAlerts      SosAlert[]
+  // Marine Platform (additive): opposite-side declarations required for
+  // prisma validate/db push — the researcher models below already referenced
+  // User without these, which made the schema un-validatable (pre-existing bug).
+  researchDatasets ResearchDataset[]
+  researchDocuments ResearchDocument[]
 }
 
 model UserProfile {
@@ -378,6 +383,11 @@ model DatasetRecord {
   @@index([species])
   @@index([occurredAt])
   @@index([latitude, longitude])
+
+  // Marine Platform (additive): opposite-side declaration for the linked
+  // MarineSpeciesObservation model below. Declarative only — produces no
+  // change to the DatasetRecord table itself.
+  marineObservations MarineSpeciesObservation[]
 }
 
 /** Validation report snapshot attached to a dataset after an upload run. */
@@ -417,4 +427,388 @@ model ResearchDocument {
 
   @@index([userId])
   @@index([domain])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Marine AI-Driven Unified Data Platform — ADDITIVE extension (isolated
+// `marine/` namespace). These models are NEW tables only: they never modify,
+// rename or drop any existing Fisherman Module table or column. Every new
+// feature built on them is feature-flagged via MARINE_PLATFORM_ENABLED and can
+// be disabled (routes return 503) or rolled back (tables dropped) without
+// touching the core app. JSON-ish fields follow the existing project pattern
+// of storing JSON in String columns (SQLite has no native JSON type).
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// One ingestion run: a file/batch parsed by a marine connector into MarineRecords.
+model MarineIngestionJob {
+  id            String    @id @default(cuid())
+  /// user who created the job
+  userId        String
+  /// source format: csv | json | fasta | fastq | netcdf-header | hdf5-header | bam-header | vcf-header | vms | catch-log
+  sourceFormat  String
+  /// domain: oceanographic | fisheries | molecular
+  domain        String
+  originalFilename String?
+  /// counts
+  totalRecords  Int       @default(0)
+  acceptedCount Int       @default(0)
+  rejectedCount Int       @default(0)
+  /// JSON string: per-row parse errors / warnings
+  parseReport   String?
+  status        String    @default("completed") // completed | failed
+  createdAt     DateTime  @default(now())
+
+  records MarineRecord[]
+  jobRef  MarineQcFinding[]
+
+  @@index([userId])
+  @@index([domain])
+  @@index([createdAt])
+}
+
+/// A standardized record produced by an ingestion job (row-level, any domain).
+model MarineRecord {
+  id          String   @id @default(cuid())
+  jobId       String
+  job         MarineIngestionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  domain      String   // oceanographic | fisheries | molecular
+  /// standardized payload (JSON string) — format-specific fields preserved
+  data        String
+  latitude    Float?
+  longitude   Float?
+  depthM      Float?
+  /// observation / sample timestamp when parseable
+  occurredAt  DateTime?
+  /// species / taxon label when present (fisheries + molecular)
+  species     String?
+  taxon       String?
+  /// QC status after validation: pending | valid | flagged | rejected
+  qcStatus    String   @default("pending")
+  source      String?
+  createdAt   DateTime @default(now())
+
+  metadata    MarineMetadata?
+  qcFindings  MarineQcFinding[]
+  searchDoc   MarineSearchIndex?
+  annotations MarineAnnotation[]
+  embargo     MarineEmbargo?
+
+  @@index([jobId])
+  @@index([domain])
+  @@index([qcStatus])
+  @@index([species])
+  @@index([occurredAt])
+  @@index([latitude, longitude])
+}
+
+/// One QA/QC finding attached to a record (outlier, duplicate, range breach…).
+model MarineQcFinding {
+  id        String   @id @default(cuid())
+  recordId  String
+  record    MarineRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  /// parent ingestion job (nullable — findings may reference the run they came from)
+  jobId     String?
+  job       MarineIngestionJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  kind      String   // outlier_zscore | outlier_iqr | duplicate_exact | duplicate_near | range_breach | missing_required
+  severity  String   @default("warning") // warning | error
+  detail    String?
+  field     String?
+  value     String?
+  createdAt DateTime @default(now())
+
+  @@index([recordId])
+  @@index([kind])
+  @@index([jobId])
+}
+
+/// FAIR / Darwin Core / MIxS-aligned metadata for one standardized record.
+model MarineMetadata {
+  id         String   @id @default(cuid())
+  recordId   String   @unique
+  record     MarineRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  /// JSON string of Darwin Core terms (scientificName, eventDate, decimalLatitude, …)
+  dwc        String?
+  /// JSON string of MIxS environmental-packages terms (env_broad_scale, lat_lon, …)
+  mixs       String?
+  /// JSON string of FAIR alignment notes (license, provenance, identifiers)
+  fair       String?
+  /// user-supplied title
+  title      String?
+  /// fast-read mirror of the authoritative MarineEmbargo state
+  isEmbargoed Boolean @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([isEmbargoed])
+}
+
+/// Inverted-index-style searchable doc for one record (SQLite-backed search).
+/// The provider interface in src/lib/marine/search/index.ts lets a real
+/// Elasticsearch/OpenSearch implementation replace this without touching
+/// calling code.
+model MarineSearchIndex {
+  id          String   @id @default(cuid())
+  recordId    String   @unique
+  record      MarineRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  /// lowercase searchable text blob (species, taxon, title, location labels…)
+  searchText  String
+  domain      String
+  latitude    Float?
+  longitude   Float?
+  depthM      Float?
+  occurredAt  DateTime?
+  isEmbargoed Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([domain])
+  @@index([isEmbargoed])
+  @@index([occurredAt])
+}
+
+/// Registered AI model (metadata + provenance). Registry is isolated from app logic.
+model MlModel {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  task        String   // species-distribution | edna-identity | anomaly-detection
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions MlModelVersion[]
+
+  @@index([task])
+}
+
+/// One version of an MlModel with training snapshot + metrics (JSON strings).
+model MlModelVersion {
+  id         String   @id @default(cuid())
+  modelId    String
+  model      MlModel  @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  version    String
+  /// implementation class backing this version, e.g. "statistical-heuristic-v1"
+  algorithm  String
+  /// JSON string: training-data provenance (which tables / record counts)
+  trainingDataJson String?
+  /// JSON string: evaluation metrics — never fabricated
+  metricsJson String?
+  notes      String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  predictions MlPrediction[]
+
+  @@unique([modelId, version])
+  @@index([isActive])
+}
+
+/// A single prediction run output (result + explainability, both JSON strings).
+model MlPrediction {
+  id             String   @id @default(cuid())
+  modelVersionId String
+  modelVersion   MlModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  userId         String   // requester
+  /// JSON string: model-specific input echo (never includes PII)
+  inputJson      String?
+  /// JSON string: primary prediction output
+  outputJson     String?
+  /// JSON string: heuristic/statistical feature importance (NOT SHAP — see docs)
+  explainJson    String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+/// Additive, non-intrusive audit trail for marine data access (governance F).
+/// Only marine routes write here; existing routes are untouched.
+model MarineAuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  // null = anonymous/unauthenticated attempt
+  action     String   // read | write | delete | predict | export
+  resource   String   // e.g. "marine.record", "marine.search", "marine.ai.predict"
+  resourceId String?
+  /// JSON string: request metadata (endpoint, query params, status code)
+  detailJson String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([resource])
+  @@index([createdAt])
+}
+
+/// Shared collaboration workspace (feature E).
+model MarineWorkspace {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  /// creator
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     MarineWorkspaceMember[]
+  annotations MarineAnnotation[]
+
+  @@index([ownerId])
+}
+
+/// Workspace membership — RBAC layered on the EXISTING User table (no changes
+/// to User/Session/auth logic). role: owner | editor | viewer
+model MarineWorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   MarineWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  role        String   @default("viewer") // owner | editor | viewer
+  createdAt   DateTime @default(now())
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+/// Annotation/comment on a marine record or dataset (feature E).
+model MarineAnnotation {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  workspace   MarineWorkspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  recordId    String?
+  record      MarineRecord?    @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  userId      String   // author
+  body        String
+  /// JSON string: optional anchoring (selected fields, bbox, time range)
+  anchorJson  String?
+  resolved    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([recordId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+/// Data embargo / sovereignty flag for NEW marine records only (feature F).
+model MarineEmbargo {
+  id            String   @id @default(cuid())
+  recordId      String   @unique
+  record        MarineRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  /// none | embargo | sovereignty-restricted
+  state         String   @default("none")
+  reason        String?
+  /// ISO country codes (comma separated) relevant to the restriction policy
+  jurisdictions String?
+  embargoUntil  DateTime?
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([state])
+}
+
+// ─── Marine Platform · Feature 1: Species & Biodiversity (additive) ──────────
+// Linked to EXISTING tables (FishAnalysis, FishingSpot, CatchRecord,
+// DatasetRecord) — never a copy of them. Pushed independently of the other
+// marine models (Option A): each marine table ships only when a feature
+// actually needs it.
+
+/// A standardized species occurrence linked to an EXISTING record.
+model MarineSpeciesObservation {
+  id            String    @id @default(cuid())
+  /// provenance: "fish-analysis" | "fishing-spot" | "catch-record" | "dataset-record" | "edna-asv"
+  originTable   String
+  /// id in the origin table (no hard FK — origin tables are pre-marine and untouched)
+  originId      String
+  /// hard link when the origin is an uploaded dataset row (cascade-safe)
+  datasetRecordId String?
+  datasetRecord DatasetRecord? @relation(fields: [datasetRecordId], references: [id], onDelete: Cascade)
+  /// Darwin Core terms (JSON string) per paper Table II: scientificName, taxonID,
+  /// kingdom…species, eventDate, decimalLatitude/decimalLongitude, occurrenceStatus,
+  /// basisOfRecord
+  dwc           String?
+  scientificName String?
+  /// species | genus | family | … (honest fallback ranking when species-level
+  /// ID is unavailable — never silently downgraded)
+  taxonRank     String?
+  latitude      Float?
+  longitude     Float?
+  occurredAt    DateTime?
+  /// sampling cell key "latCell:lngCell" at the configured resolution
+  /// (MARINE_SPATIAL_CELL_DEG, see src/lib/marine/biodiversity/config.ts)
+  spatialCell   String?
+  /// organismQuantity / individuals (paper Table II organismQuantity mapping)
+  count         Int       @default(1)
+  createdAt     DateTime  @default(now())
+
+  diversityMetrics MarineDiversityMetric[]
+  ednaAsvs       MarineEdnaAsv[]
+
+  @@unique([originTable, originId])
+  @@index([scientificName])
+  @@index([spatialCell])
+  @@index([occurredAt])
+}
+
+/// Cached Shannon index per spatial cell (paper Eq. 4: H = −Σ pᵢ ln pᵢ) —
+/// recomputed on demand and stored WITH the exact input proportions so every
+/// published number is auditable. Never fabricated: cells without enough
+/// data are reported as such by the API, not filled with placeholders.
+model MarineDiversityMetric {
+  id              String   @id @default(cuid())
+  observationId   String
+  observation     MarineSpeciesObservation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+  scope           String   @default("spatial-cell") // spatial-cell | global
+  cellKey         String?
+  /// Shannon H (Eq. 4) at full precision
+  shannonH        Float
+  speciesCount    Int
+  individualCount Int
+  /// JSON: {species: pi} input proportions — the auditable input to Eq. 4
+  proportionsJson String
+  computedAt      DateTime @default(now())
+
+  @@unique([scope, cellKey])
+  @@index([cellKey])
+}
+
+// ─── Marine Platform · Feature 2: eDNA & Taxonomy (additive) ─────────────────
+/// One eDNA ASV/OTU (amplicon sequence variant / operational taxonomic unit).
+/// All Darwin Core DNA-Derived Data Extension mappings follow paper Table II.
+model MarineEdnaAsv {
+  id            String    @id @default(cuid())
+  /// paper Table II: asv_id/otu_id → occurrenceID
+  asvId         String    @unique
+  /// specimen/observation label the ASV is assigned to
+  scientificName String?
+  /// species | genus | family | … — honest assignment rank
+  taxonRank     String?
+  /// Villon-style fallback lineage (JSON string array) nearest matches with
+  /// similarity scores; empty when no reference data exists
+  fallbackJson  String?
+  /// 0..1 nearest-reference similarity — null when no reference DB
+  confidence    Float?
+  /// paper Table II: marker_gene → target_gene (e.g. 12S, COI, 16S)
+  targetGene    String?
+  /// raw nucleotide sequence when provided by the source
+  sequence      String?
+  /// source dataset label (provenance)
+  source        String?
+  /// paper Table II: sample_lat/sample_lon → decimalLatitude/decimalLongitude
+  latitude      Float?
+  longitude     Float?
+  /// paper Table II: collection_date → eventDate
+  eventDate     DateTime?
+  /// JSON string: extra sample metadata (station, depth, salinity…)
+  sampleMetaJson String?
+  /// link to the Species & Biodiversity layer (Feature 1) so eDNA detections
+  /// flow into the biodiversity catalogue with their honest taxonRank
+  observationId String?
+  observation   MarineSpeciesObservation? @relation(fields: [observationId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+
+  @@index([scientificName])
+  @@index([taxonRank])
+  @@index([targetGene])
+  @@index([eventDate])
+  @@index([latitude, longitude])
 }
