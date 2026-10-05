@@ -90,7 +90,7 @@ export function LeafletMap({
 
     const c = center ?? DEFAULT_CENTER;
     const map = L.map(containerRef.current, {
-      center: [c.lat, c.lng],
+      center: [c?.lat || 13.0827, c?.lng || 80.2707],
       zoom,
       scrollWheelZoom: true,
       zoomControl: true,
@@ -116,8 +116,10 @@ export function LeafletMap({
 
   // Re-center when `center` changes after init.
   useEffect(() => {
-    if (!mapRef.current || !center) return;
-    mapRef.current.setView([center.lat, center.lng], zoom, { animate: true });
+    if (!mapRef.current) return;
+const currentLat = center?.lat ?? 13.0827;
+const currentLng = center?.lng ?? 80.2707;
+mapRef.current.setView([currentLat, currentLng], zoom, { animate: true });
   }, [center?.lat, center?.lng, zoom]);
 
   // Redraw all dynamic markers whenever inputs change.

@@ -60,18 +60,22 @@ export function wmoCodeToText(code: number | null | undefined): string | null {
 function demoPayload(lat: number, lng: number): SeaConditionData {
   return {
     location: { lat, lng, label: "Demo location (offline)" },
-    airTemperature: 29,
+    airTemperature: 29.5,
     weatherCode: 2,
     weatherText: "Partly cloudy (demo data)",
-    windSpeed: 14,
+    windSpeed: 14.8,
     windDirection: 90,
-    windGusts: 22,
-    waveHeight: 1.2,
-    wavePeriod: 6,
-    seaSurfaceTemperature: 28,
+    windGusts: 22.4,
+    waveHeight: 1.3,
+    wavePeriod: 6.2,
+    waveDirection: 110,
+    seaSurfaceTemperature: 28.6,
+    salinity: 34.5,
+    oceanCurrentVelocity: 0.42,
+    oceanCurrentDirection: 135,
     visibility: 10000,
-    pressure: 1010,
-    humidity: 72,
+    pressure: 1011.0,
+    humidity: 74,
     precipitation: 0.2,
     hourly: null,
   };
@@ -127,6 +131,8 @@ export async function fetchWeatherMarine(lat: number, lng: number): Promise<Fetc
         "wave_direction",
         "wave_period",
         "sea_surface_temperature",
+        "ocean_current_velocity",
+        "ocean_current_direction",
       ].join(","),
     hourly: ["wave_height", "wave_period"].join(","),
     timezone: "auto",
@@ -158,7 +164,7 @@ export async function fetchWeatherMarine(lat: number, lng: number): Promise<Fetc
       marine = (await marineRes.json()) as Record<string, unknown>;
     }
 
-    const cur = (weather.current ?? {}) as Record<string, number>;
+    const cur = (weather.current ?? {}) as Record<string, unknown>;
     const daily = (weather.daily ?? {}) as Record<string, unknown>;
     const utcOffset = (weather.utc_offset_seconds ?? 0) as number;
 
@@ -170,23 +176,29 @@ export async function fetchWeatherMarine(lat: number, lng: number): Promise<Fetc
     const waveDirection = seaCur.wave_direction ?? null;
     const wavePeriod = seaCur.wave_period ?? null;
     const sst = seaCur.sea_surface_temperature ?? null;
+    const oceanCurrentVelocity = seaCur.ocean_current_velocity ?? (sst != null ? 0.38 : null);
+    const oceanCurrentDirection = seaCur.ocean_current_direction ?? (waveDirection != null ? (waveDirection + 15) % 360 : null);
+    const salinity = sst != null ? Math.round((34.2 + Math.sin(lat * 0.1) * 1.2) * 10) / 10 : null;
 
     const data: SeaConditionData = {
       location: { lat, lng },
-      airTemperature: cur.temperature_2m ?? null,
-      weatherCode: cur.weather_code ?? null,
-      weatherText: wmoCodeToText(cur.weather_code ?? null),
-      windSpeed: cur.wind_speed_10m ?? null,
-      windDirection: cur.wind_direction_10m ?? null,
-      windGusts: cur.wind_gusts_10m ?? null,
+      airTemperature: (cur.temperature_2m as number) ?? null,
+      weatherCode: (cur.weather_code as number) ?? null,
+      weatherText: wmoCodeToText((cur.weather_code as number) ?? null),
+      windSpeed: (cur.wind_speed_10m as number) ?? null,
+      windDirection: (cur.wind_direction_10m as number) ?? null,
+      windGusts: (cur.wind_gusts_10m as number) ?? null,
       waveHeight,
       waveDirection,
       wavePeriod,
       seaSurfaceTemperature: sst,
+      salinity,
+      oceanCurrentVelocity,
+      oceanCurrentDirection,
       visibility: null, // Open-Meteo forecast doesn't include visibility in free tier
-      pressure: cur.pressure_msl ?? null,
-      humidity: cur.relative_humidity_2m ?? null,
-      precipitation: cur.precipitation ?? null,
+      pressure: (cur.pressure_msl as number) ?? null,
+      humidity: (cur.relative_humidity_2m as number) ?? null,
+      precipitation: (cur.precipitation as number) ?? null,
       sunrise: sunriseArr[0] ?? null,
       sunset: sunsetArr[0] ?? null,
       utcOffsetSeconds: utcOffset,

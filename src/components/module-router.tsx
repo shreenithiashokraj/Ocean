@@ -3,6 +3,11 @@
 import { useAppStore, type ViewId } from "@/lib/store";
 import { Construction, type LucideIcon } from "lucide-react";
 import {
+  // Core Scientific Modules
+  OceanographicModuleView,
+  FisheriesModuleView,
+  BiodiversityModuleView,
+  IntegratedAnalysisView,
   // Fisherman module views (real implementations live in src/components/<module>/)
   SeaConditionsView,
   SafetyAlertsView,
@@ -44,6 +49,12 @@ export function ModuleRouter() {
 
 function ViewRenderer({ view }: { view: ViewId }) {
   switch (view) {
+    // Core Scientific Modules
+    case "module.oceanographic": return <OceanographicModuleView />;
+    case "module.fisheries": return <FisheriesModuleView />;
+    case "module.biodiversity": return <BiodiversityModuleView />;
+    case "module.analysis": return <IntegratedAnalysisView />;
+
     // Fisherman
     case "fisherman.dashboard": return <FishermanDashboardView />;
     case "fisherman.sea-conditions": return <SeaConditionsView />;

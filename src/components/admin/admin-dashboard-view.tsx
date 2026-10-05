@@ -183,15 +183,15 @@ export function AdminDashboardView() {
       ]);
 
       setData({
-        users: usersR.users ?? [],
-        logs: logsR.logs ?? [],
-        settings: settingsR.settings ?? [],
-        alerts: alertsR.alerts ?? [],
-        seaConditions: seaR.records ?? [],
-        fishAnalyses: fishR.records ?? [],
+        users: (usersR.users ?? []) as AdminUser[],
+        logs: (logsR.logs ?? []) as AdminApiLog[],
+        settings: (settingsR.settings ?? []) as AdminSetting[],
+        alerts: (alertsR.alerts ?? []) as AdminAlert[],
+        seaConditions: (seaR.records ?? []) as AdminSeaCondition[],
+        fishAnalyses: (fishR.records ?? []) as AdminFishAnalysis[],
         locations:
-          locR && locR.records
-            ? ((locR as { records: AdminLocationsPayload }).records)
+          locR && (locR as any).records
+            ? (((locR as any).records) as AdminLocationsPayload)
             : null,
       });
     } catch (e) {

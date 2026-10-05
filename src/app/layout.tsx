@@ -15,11 +15,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Fisherman Module — Smart Fishing Technology Platform",
+  title: "AI-Driven Unified Marine Data Intelligence Platform",
   description:
-    "Real-time sea conditions, safety alerts, AI fish analysis and navigation for fishermen, researchers and administrators.",
-  keywords: ["Fisherman Module", "fishing", "sea conditions", "marine", "AI fish analysis", "navigation"],
-  authors: [{ name: "Fisherman Module" }],
+    "Unified intelligence platform integrating Oceanographic data, Fisheries analytics, and Molecular Biodiversity (eDNA) insights.",
+  keywords: [
+    "Marine Intelligence",
+    "Oceanographic Data",
+    "Fisheries Management",
+    "Molecular Biodiversity",
+    "eDNA",
+    "Sea Surface Temperature",
+  ],
+  authors: [{ name: "Marine Research Consortium" }],
 };
 
 export default function RootLayout({
@@ -28,13 +35,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="dark">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
+          defaultTheme="light"
           enableSystem
           disableTransitionOnChange
         >

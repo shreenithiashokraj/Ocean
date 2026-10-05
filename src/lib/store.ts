@@ -21,6 +21,11 @@ export type ViewId =
   | "forgot-password"
   | "reset-password"
   | "unauthorized"
+  // Core Scientific Modules
+  | "module.oceanographic"
+  | "module.fisheries"
+  | "module.biodiversity"
+  | "module.analysis"
   // fisherman
   | "fisherman.dashboard"
   | "fisherman.sea-conditions"
@@ -110,6 +115,17 @@ export function defaultDashboardFor(role: Role): ViewId {
 /** Roles allowed to view a portal (client-side mirror of backend guard). */
 export function roleCanAccess(view: ViewId, role: Role | undefined): boolean {
   if (!role) return false;
+  if (
+    [
+      "landing",
+      "module.oceanographic",
+      "module.fisheries",
+      "module.biodiversity",
+      "module.analysis",
+    ].includes(view)
+  ) {
+    return true;
+  }
   if (role === "ADMIN") return true; // admin sees every portal
   if (role === "RESEARCHER")
     return [

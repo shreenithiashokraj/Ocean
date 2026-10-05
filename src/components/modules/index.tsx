@@ -41,6 +41,12 @@ export { AdminSettingsView } from "@/components/admin/admin-settings-view";
 // Phase 2
 export { ApiMonitoringView } from "@/components/admin/api-monitoring-view";
 
+// ── Core Scientific Modules ────────────────────────────────────────────────
+export { OceanographicModuleView } from "@/components/modules/oceanographic-module-view";
+export { FisheriesModuleView } from "@/components/modules/fisheries-module-view";
+export { BiodiversityModuleView } from "@/components/modules/biodiversity-module-view";
+export { IntegratedAnalysisView } from "@/components/modules/integrated-analysis-view";
+
 // ── Marine Platform researcher workbench (additive) ───────────────────────────
 export { SpeciesBiodiversityView } from "@/components/marine/species-biodiversity-view";
 export { EdnaTaxonomyView } from "@/components/marine/edna-taxonomy-view";

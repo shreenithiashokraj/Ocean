@@ -62,9 +62,15 @@ export default function Home() {
         setView(defaultDashboardFor(user.role));
       }
     } else {
-      // Not signed in — never show app shell.
+      // Not signed in — allow scientific module exploration or auth views
       const isAuthView = (AUTH_VIEWS as readonly string[]).includes(view);
-      if (!isAuthView) setView("landing");
+      const isModuleView = [
+        "module.oceanographic",
+        "module.fisheries",
+        "module.biodiversity",
+        "module.analysis",
+      ].includes(view);
+      if (!isAuthView && !isModuleView) setView("landing");
     }
   }, [hydrated, booting, user]);
 
@@ -72,12 +78,12 @@ export default function Home() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center ocean-bg">
         <Loader2 className="size-10 animate-spin text-primary" />
-        <p className="mt-4 text-sm text-muted-foreground">Loading Fisherman Module…</p>
+        <p className="mt-4 text-sm text-muted-foreground">Loading Marine Intelligence Platform…</p>
       </div>
     );
   }
 
-  // Not signed in → auth views
+  // Not signed in → auth views or public module exploration
   if (!user) {
     switch (view) {
       case "sign-in": return <SignInView />;
@@ -85,6 +91,11 @@ export default function Home() {
       case "forgot-password": return <ForgotPasswordView />;
       case "reset-password": return <ResetPasswordView />;
       case "unauthorized": return <UnauthorizedView />;
+      case "module.oceanographic":
+      case "module.fisheries":
+      case "module.biodiversity":
+      case "module.analysis":
+        return <AppShell />;
       default: return <LandingView />;
     }
   }

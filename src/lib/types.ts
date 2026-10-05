@@ -30,6 +30,9 @@ export interface SeaConditionData {
   wavePeriod?: number | null; // s
   waveDirection?: number | null;
   seaSurfaceTemperature?: number | null;
+  salinity?: number | null; // PSU / ppt
+  oceanCurrentVelocity?: number | null; // m/s
+  oceanCurrentDirection?: number | null; // degrees
   visibility?: number | null; // m
   pressure?: number | null; // hPa
   humidity?: number | null; // %
@@ -43,6 +46,8 @@ export interface SeaConditionData {
     windSpeed?: number[];
     airTemperature?: number[];
     precipitation?: number[];
+    seaSurfaceTemperature?: number[];
+    salinity?: number[];
   } | null;
   raw?: unknown;
 }
